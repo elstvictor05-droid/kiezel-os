@@ -28,6 +28,8 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -f "${DISK}" && -f "${KEY}" && ${EUID} -eq 0 ]] || { echo "need --disk, --key and root" >&2; exit 2; }
 mkdir -p "${WORKDIR}/state" "${WORKDIR}/tpm"; rm -f "${WORKDIR}/state/accepted"
+# Absolute: dnsmasq daemonizes with chdir("/"), so relative pid/log paths would break.
+WORKDIR="$(realpath "${WORKDIR}")"; DISK="$(realpath "${DISK}")"; KEY="$(realpath "${KEY}")"
 REPORT="${WORKDIR}/report.txt"; : > "${REPORT}"
 fails=0
 log()  { printf '%s\n' "$*" | tee -a "${REPORT}"; }
