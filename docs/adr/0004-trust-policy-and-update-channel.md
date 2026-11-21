@@ -35,10 +35,12 @@ our image as the origin and (2) that origin requiring a signature.
      `keyPaths: [kiezel.pub, kiezel-backup.pub]` and `signedIdentity: matchRepository`.
    - Universal Blue keys and scopes **removed**. A Kiezel device should not switch to another
      image line.
-   - Catch-all for `docker`: kept **`insecureAcceptAnything` for now**, so that Advanced users'
-     podman and distrobox pulls (docker.io and others) keep working. Phase 2 decides whether
-     the catch-all becomes `reject`, with an opt-out for Advanced users. This is noted as an
-     open accessibility-versus-security question.
+   - Catch-all for `docker`: `insecureAcceptAnything` during Phase 1 only. **Owner direction
+     for Phase 2:** the catch-all becomes `reject` in the Simple and Standard profiles. It is
+     opened only in Advanced, by an admin running a `ujust` recipe, so that podman and
+     distrobox can pull from docker.io and other registries. The exact mechanism (a
+     system-wide policy switch, or a per-user `~/.config/containers/policy.json`) will be
+     presented for approval in Phase 2.
    - `/etc/containers/registries.d/kiezel.yaml`: `use-sigstore-attachments: true` for our scope.
 2. **Signed origin.** The installer deploys with signature enforcement (Anaconda without
    `--no-signature-verification`, or `bootc switch --enforce-container-sigpolicy`), so the

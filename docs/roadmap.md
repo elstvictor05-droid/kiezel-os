@@ -36,8 +36,11 @@ ADR-0001 to ADR-0008, repository skeleton, config schema with CI validation, Ren
 - Kiezel trust policy (ADR-0004) and boot test with the checks above.
 - **ISO thin slice** (ADR-0005): `mkksiso` netinstall ISO, LUKS2, verified install-time pull.
   This proves the hard parts early instead of only testing qcow2 for three phases.
-- **Spikes:** greenboot rollback (ADR-0008) and TPM2 enrollment.
-- Signing keys set up; the owner generates the offline backup key.
+- **Spikes (in parallel):** greenboot rollback (ADR-0008), TPM2 enrollment, and **Plasma Setup**
+  (ADR-0007), including accessibility: does Orca speak in Plasma Setup, and can text size be
+  enlarged before the first login?
+- Signing keys set up in the protected `release` environment; branch protection on `main`;
+  the owner generates the offline backup key.
 
 ### Phase 2 — hardening and threat model → **v0.1 release**
 - `docs/threat-model.md`, `docs/hardening.md` (each measure with its reason and risk).

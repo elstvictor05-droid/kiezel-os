@@ -1,6 +1,6 @@
 # ADR-0005: Installer — small network-install ISO built with `mkksiso`, LUKS2 via kickstart
 
-- **Status:** Proposed (needs owner approval: it means installing requires internet)
+- **Status:** Accepted for v0.1 (owner approval 2026-11-21, with conditions below)
 - **Date:** 2026-11-21
 - **Phase:** 0 (thin slice in Phase 1, full in Phase 4)
 
@@ -41,7 +41,7 @@
    - Downside: installing requires internet. Wired networking works automatically; Wi-Fi works
      in Anaconda.
 
-## Decision (proposed)
+## Decision
 
 **Option 2 as the primary release asset.** Option 1 stays possible later as an extra download
 if testers show that offline installs are really needed.
@@ -61,6 +61,16 @@ Verification steps are in the README.
       `%pre` really replaces the policy.
 - [ ] The installed origin uses signature enforcement (`bootc status`).
 - [ ] TPM2 auto-unlock works with `swtpm` and falls back to the passphrase without TPM.
+
+## Owner conditions (2026-11-21)
+
+1. The kickstart **never** uses `--no-signature-verification` on `ostreecontainer`. CI greps
+   for it and fails if it appears (`tests/iso/check-kickstart.sh`).
+2. A CI test proves that the installer **rejects an unsigned image**: an automated install
+   pointed at the `ci-unsigned` tag must fail during the payload step.
+3. The user guide states that installing requires internet, and explains Wi-Fi setup in the
+   installer step by step, with screenshots.
+4. An offline ISO with external hosting is a **later option**, not a v0.1 requirement.
 
 If `%pre` policy injection does not work, the fallback is a custom installer image
 (bootc-installer or Titanoboa) built in CI. That would supersede this ADR.
