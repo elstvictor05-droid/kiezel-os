@@ -8,8 +8,8 @@ with Secure Boot (Microsoft keys enrolled, so Fedora's shim must be accepted) an
 | Workflow | When | What |
 |---|---|---|
 | `validate` | every push and PR | `config.yaml` against its schema, shellcheck |
-| `build` → `build + boot test` | every PR, main, weekly | Base signature check, image build, `bootc container lint`, static image checks, kickstart guard, then a QEMU boot with Secure Boot and swtpm. The boot checks: system `running`, Secure Boot on, SELinux enforcing, **0 AVC denials**, greenboot healthy, TPM2 present, origin is `ghcr.io/…/kiezel:stable`, a signed canary is accepted, an **unsigned** canary and an **unsigned bootable image are refused**, and a **deliberately broken image rolls back by itself**. |
-| `build` → `sign + promote` | main, after owner approval | Signs the tested digest, tags `:stable` and `:YYYYMMDD`, publishes the signature canaries |
+| `build` → `build + boot test` | every PR, main, weekly | Base signature check, image build, `bootc container lint`, static image checks, kickstart guard, then a QEMU boot with Secure Boot and swtpm. The boot checks: system `running`, Secure Boot on, SELinux enforcing, **0 AVC denials**, greenboot healthy, TPM2 present, origin is `ghcr.io/…/kiezel:stable`. The **signature path** (never skipped) checks that an image signed through `ci/sign.sh` has the classic `.sig` tag in the registry and is accepted, while unsigned and **wrong-key** images are rejected, both by device-style skopeo and inside the VM. An unsigned bootable Kiezel image is refused by `bootc switch`. The real update timer then runs: power-off with a staged update (no false rollback), a **deliberately broken image rolls back by itself**, and the broken digest is not staged again. |
+| `build` → `sign + promote` | main, after owner approval | Signs the tested digest with `ci/sign.sh`, proves the classic `.sig` tag exists, runs **device-style verification** (skopeo with the Kiezel policy; `cosign verify` is not proof, ADR-0003), and only then promotes **by digest** to `:stable` and `:YYYYMMDD` |
 
 The boot-test report and serial log are attached to every run as the `boot-test-report`
 artifact.
