@@ -1,0 +1,8 @@
+[Unit]
+Description=Kiezel: restore the installer's region after Plasma Setup finishes
+
+[Path]
+PathExists=/etc/plasma-setup-done
+
+[Install]
+WantedBy=multi-user.target
