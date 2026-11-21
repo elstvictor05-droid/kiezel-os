@@ -1,0 +1,93 @@
+name: iso
+
+# Installer tests (ADR-0005). Heavy (a full network install per case), so not on every PR:
+# weekly, on demand, and whenever the installer itself changes.
+#   install-signed    the CI-test ISO installs the signed :stable image to an encrypted disk
+#   refuse-unsigned   the same ISO pointed at an UNSIGNED bootable image must refuse to install
+
+on:
+  schedule:
+    - cron: "41 5 * * 3"
+  workflow_dispatch:
+  pull_request:
+    paths: ["iso/**", "tests/iso/**", ".github/workflows/iso.yml", "system_files/usr/share/pki/containers/**"]
+  push:
+    branches: [main]
+    paths: ["iso/**", "tests/iso/**", ".github/workflows/iso.yml", "system_files/usr/share/pki/containers/**"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/elstvictor05-droid/kiezel
+
+jobs:
+  install-test:
+    name: install test (${{ matrix.case }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: install-signed
+            tag: stable
+            expect: success
+          - case: refuse-unsigned
+            tag: ci-unsigned-bootable
+            expect: signature-rejected
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install tooling and enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf swtpm gpgv
+
+      - name: Build CI-test ISO for ${{ matrix.tag }}
+        run: |
+          mkdir -p tests/out
+          ssh-keygen -q -t ed25519 -N '' -f tests/out/ci_key
+          iso/build-iso.sh --test --test-pubkey tests/out/ci_key.pub \
+            --image "${IMAGE}:${{ matrix.tag }}" tests/out/iso
+
+      - name: Install test (expect ${{ matrix.expect }})
+        run: |
+          TIMEOUT=4200 tests/iso/install-test.sh --iso tests/out/iso/kiezel-netinstall-ci-test.iso \
+            --expect "${{ matrix.expect }}" --workdir tests/out/install
+
+      - name: Boot the installed system and check it (LUKS2, Secure Boot, graphical login, trust policy)
+        if: matrix.expect == 'success'
+        run: tests/iso/post-install-check.sh --workdir tests/out/install --key tests/out/ci_key
+
+      - name: Upload installer serial log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-${{ matrix.case }}
+          path: |
+            tests/out/install/serial.log
+            tests/out/install/serial-boot.log
+            tests/out/install/post-install-report.txt
+            tests/out/iso/kiezel.ks
+          if-no-files-found: ignore
+
+  production-iso:
+    name: production ISO (unsigned artifact; signed at release)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q gpgv
+          iso/build-iso.sh tests/out/iso
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kiezel-netinstall
+          path: |
+            tests/out/iso/kiezel-netinstall.iso
+            tests/out/iso/kiezel-netinstall.iso.sha256
+          retention-days: 14
