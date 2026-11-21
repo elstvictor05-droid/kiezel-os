@@ -1,0 +1,7 @@
+# Deliberately broken Kiezel image for the greenboot rollback test (ADR-0008).
+# The login screen never starts, so the required health check fails on every boot and
+# greenboot must return the machine to the previous deployment by itself.
+ARG BASE=localhost/kiezel:ci
+FROM ${BASE}
+RUN systemctl mask sddm.service
+LABEL org.opencontainers.image.title="Kiezel (deliberately broken, CI only)"
