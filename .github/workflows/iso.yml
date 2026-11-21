@@ -43,6 +43,8 @@ jobs:
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          # SSH to test VMs goes over virtio-vsock, so the Kiezel firewall stays fully enabled.
+          sudo modprobe vhost_vsock && sudo chmod 0666 /dev/vhost-vsock
           sudo apt-get update -q
           sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf swtpm gpgv
 

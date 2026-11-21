@@ -9,9 +9,9 @@
 #   --sigtest DIR  fixtures from tests/sign/sigtest-setup.sh (signature path; required unless
 #                  --allow-skip, which the workflow passes only for fork PRs)
 #
-# The disk must contain the test user "root" with the given SSH key and the kernel argument
-# systemd.wants=sshd.service (tests/boot/make-test-disk.sh does both). sshd is OFF in Kiezel;
-# it is switched on only for these test disks.
+# The disk must contain the test user "root" with the given SSH key (make-test-disk.sh). SSH runs
+# over virtio-vsock (systemd-ssh-generator binds sshd to vsock inside VMs); sshd.service stays
+# OFF and the Kiezel firewall stays ON, exactly as in production.
 #
 # Update scenarios (--registry): a plain HTTP registry on the host (e.g. 127.0.0.1:5000, seen by
 # the VM as 10.0.2.2:5000) holding kiezel:good, kiezel:good2 (same OS, different digest) and
@@ -22,8 +22,10 @@
 #   3. two timer runs after the rollback         -> the failed digest is NOT staged again
 set -uo pipefail
 
-DISK="" KEY="" REGISTRY="" SIGTEST="" ALLOW_SKIP=0 WORKDIR="${PWD}/tests/out/boot"
-SSH_PORT="${SSH_PORT:-2222}"
+DISK="" KEY="" REGISTRY="" SIGTEST="" ALLOW_SKIP=0 LYNIS_TARBALL="" WORKDIR="${PWD}/tests/out/boot"
+VSOCK_CID="${VSOCK_CID:-3}"        # SSH goes over virtio-vsock: the Kiezel firewall stays fully on
+PROBE_PORT="${PROBE_PORT:-18080}"   # host port forwarded to guest TCP 8080 for the firewall probe
+HERE="$(cd "$(dirname "$0")" && pwd)"
 OVMF_CODE="${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.secboot.fd}"
 OVMF_VARS="${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.ms.fd}"
 MEM_MB="${MEM_MB:-4096}"
@@ -36,7 +38,8 @@ while [[ $# -gt 0 ]]; do
         --key) KEY="$2"; shift 2 ;;
         --registry) REGISTRY="$2"; shift 2 ;;
         --sigtest) SIGTEST="$2"; shift 2 ;;
-        --allow-skip) ALLOW_SKIP=1; shift ;;   # fork PRs only: missing signature fixtures may SKIP
+        --allow-skip) ALLOW_SKIP=1; shift ;;
+        --lynis) LYNIS_TARBALL="$2"; shift 2 ;;   # fork PRs only: missing signature fixtures may SKIP
         --workdir) WORKDIR="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -54,10 +57,11 @@ pass() { log "PASS  $1"; }
 fail() { log "FAIL  $1${2:+  ($2)}"; fails=$((fails + 1)); }
 skip() { log "SKIP  $1${2:+  ($2)}"; }
 
-ssh_vm() {
-    ssh -i "${KEY}" -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=5 -o LogLevel=ERROR -o BatchMode=yes root@127.0.0.1 "$@"
-}
+SSH_OPTS=(-i "${KEY}" -o "ProxyCommand=python3 -I ${HERE}/vsock-proxy.py ${VSOCK_CID} 22"
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ConnectTimeout=5 -o LogLevel=ERROR -o BatchMode=yes)
+ssh_vm() { ssh "${SSH_OPTS[@]}" root@vsock "$@"; }
+scp_vm() { scp -q "${SSH_OPTS[@]}" "$@"; }
 
 wait_ssh() {
     local timeout="$1" start=${SECONDS}
@@ -92,7 +96,8 @@ start_vm() {
         -drive "file=${DISK},if=virtio,format=qcow2" \
         -chardev "socket,id=chrtpm,path=${WORKDIR}/swtpm.sock" \
         -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
-        -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" -device virtio-net-pci,netdev=n0 \
+        -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${PROBE_PORT}-:8080" -device virtio-net-pci,netdev=n0 \
+        -device "vhost-vsock-pci,guest-cid=${VSOCK_CID}" \
         -serial "file:${SERIAL}" -display none \
         -daemonize -pidfile "${WORKDIR}/qemu.pid" || { echo "QEMU failed to start" >&2; exit 1; }
 }
@@ -164,6 +169,75 @@ booted="$(ssh_vm "bootc status --json | jq -r '.status.booted.image.image.image'
 [[ "${booted}" == "${KIEZEL_REF}:"* ]] && pass "booted image reference is ${booted}" \
     || fail "booted image reference is ${KIEZEL_REF}:*" "${booted}"
 
+# --- Phase 2 hardening (docs/hardening.md): every measure is checked on the running system --------
+# sysctl: every key in the shipped file must have its value at runtime.
+bad=""
+while IFS='=' read -r key val; do
+    key="$(xargs <<<"${key}")"; val="$(xargs <<<"${val}")"
+    [[ -z "${key}" || "${key}" == \#* ]] && continue
+    got="$(ssh_vm "sysctl -n ${key}" 2>&1 | xargs)"
+    [[ "${got}" == "${val}" ]] || bad+=" ${key}=${got}(want ${val})"
+done < <(grep -vE '^\s*(#|$)' "${HERE}/../../system_files/usr/lib/sysctl.d/60-kiezel-hardening.conf")
+[[ -z "${bad}" ]] && pass "all kernel hardening sysctls active" || fail "kernel hardening sysctls active" "${bad}"
+
+# Boot parameters from bootc kargs.d.
+cmdline="$(ssh_vm 'cat /proc/cmdline' 2>&1)"
+missing=""
+for karg in $(python3 -c 'import tomllib,sys; print(" ".join(tomllib.load(open(sys.argv[1],"rb"))["kargs"]))' \
+        "${HERE}/../../system_files/usr/lib/bootc/kargs.d/10-kiezel-hardening.toml"); do
+    grep -qw -- "${karg}" <<<"${cmdline}" || missing+=" ${karg}"
+done
+[[ -z "${missing}" ]] && pass "hardening boot parameters active" || fail "hardening boot parameters active" "missing:${missing}"
+
+# Firewall: Kiezel zone active, and a real listener inside the VM is NOT reachable from outside.
+zone="$(ssh_vm 'firewall-cmd --get-default-zone; firewall-cmd --get-active-zones | head -1' 2>&1 | xargs)"
+[[ "${zone}" == "kiezel kiezel" ]] && pass "firewall: Kiezel zone is default and active" || fail "firewall: Kiezel zone default and active" "${zone}"
+ssh_vm 'systemd-run --unit=kiezel-probe --property=Type=exec python3 -m http.server 8080 --bind 0.0.0.0' >/dev/null 2>&1
+sleep 3
+inside="$(ssh_vm 'curl -s -o /dev/null -w %{http_code} --max-time 5 http://127.0.0.1:8080/' 2>&1)"
+outside="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:${PROBE_PORT}/" 2>&1)"
+ssh_vm 'systemctl stop kiezel-probe' >/dev/null 2>&1
+if [[ "${inside}" == "200" && "${outside}" != "200" ]]; then
+    pass "firewall: a listening service is reachable inside the VM (200) but NOT from the network (${outside})"
+else fail "firewall blocks incoming connections" "inside=${inside} outside=${outside}"; fi
+
+# DNS-over-TLS mode.
+dot="$(ssh_vm 'resolvectl status | grep -m1 -oiE "[+-]?DNSOverTLS(=[a-z]+)?"' 2>&1)"
+grep -qiE 'opportunistic|\+DNSOverTLS' <<<"${dot}" && pass "DNS-over-TLS opportunistic (${dot})" || fail "DNS-over-TLS opportunistic" "${dot}"
+
+# Services.
+svc="$(ssh_vm 'systemctl is-active sshd.service; systemctl is-enabled fwupd-refresh.timer; systemctl is-active usbguard.service' 2>&1 | xargs)"
+[[ "${svc}" == "inactive enabled inactive" ]] && pass "sshd off, fwupd refresh on, USBGuard off by default" || fail "service baseline" "${svc}"
+
+# Container trust (ADR-0004): root/system cannot pull unsigned images from other registries...
+out="$(ssh_vm 'podman pull -q quay.io/libpod/alpine:latest' 2>&1)"
+if [[ $? -ne 0 ]] && grep -qiE 'rejected|policy' <<<"${out}"; then pass "default: images from other registries are rejected (Simple/Standard)"
+else fail "default rejects images from other registries" "${out:0:160}"; fi
+# ...and the Advanced opt-in opens it for ONE user only, without touching the system policy.
+ssh_vm 'id ciuser >/dev/null 2>&1 || useradd -m ciuser; loginctl enable-linger ciuser' >/dev/null 2>&1
+ssh_vm 'sha256sum /etc/containers/policy.json' > "${WORKDIR}/policy-before.txt" 2>&1
+open_out="$(ssh_vm "runuser -l ciuser -c '/usr/libexec/kiezel/container-registries open && podman pull -q quay.io/libpod/alpine:latest'" 2>&1)"
+if [[ $? -eq 0 ]] && ssh_vm 'sha256sum /etc/containers/policy.json' | cmp -s - "${WORKDIR}/policy-before.txt"; then
+    pass "Advanced opt-in: this user can pull from other registries; system policy unchanged"
+else fail "Advanced opt-in (per-user policy)" "${open_out:0:200}"; fi
+ssh_vm "runuser -l ciuser -c '/usr/libexec/kiezel/container-registries close'" >/dev/null 2>&1
+
+# Flatpak/Firefox sandbox still works with the hardening (user namespaces + seccomp).
+bw="$(ssh_vm "runuser -l ciuser -c 'bwrap --unshare-all --share-net --die-with-parent --ro-bind / / --proc /proc --dev /dev true && echo ok'" 2>&1)"
+[[ "${bw}" == "ok" ]] && pass "unprivileged sandbox (bubblewrap, as used by Flatpak) works" || fail "bubblewrap sandbox works" "${bw:0:200}"
+fx="$(ssh_vm "runuser -l ciuser -c 'P=\$(mktemp -d); timeout 120 firefox --headless --no-remote --profile \$P about:blank >/dev/null 2>&1 & sleep 90; ls \$P/extensions/ 2>/dev/null; kill %1 2>/dev/null; true'" 2>&1)"
+if grep -q 'uBlock0@raymondhill.net' <<<"${fx}"; then pass "Firefox starts (content sandbox) and the policy installed uBlock Origin"
+else fail "Firefox starts and policy installs uBlock Origin" "extensions: ${fx:0:160}"; fi
+
+# Lynis score (report only; the trend is tracked, not gated).
+if [[ -f "${LYNIS_TARBALL:-}" ]]; then
+    scp_vm "${LYNIS_TARBALL}" root@vsock:/root/lynis.tar.gz >/dev/null 2>&1
+    ssh_vm 'cd /root && tar xzf lynis.tar.gz && cd lynis && ./lynis audit system --quick --no-colors --quiet --logfile /root/lynis.log --report-file /root/lynis-report.dat >/dev/null 2>&1; grep -E "^hardening_index=" /root/lynis-report.dat' > "${WORKDIR}/lynis-index.txt" 2>&1
+    scp_vm root@vsock:/root/lynis-report.dat "${WORKDIR}/lynis-report.dat" >/dev/null 2>&1
+    scp_vm root@vsock:/root/lynis.log "${WORKDIR}/lynis.log" >/dev/null 2>&1
+    log "INFO  Lynis $(cut -d= -f2 "${WORKDIR}/lynis-index.txt" 2>/dev/null | sed 's/^/hardening index: /')"
+fi
+
 # --- Signature path (ADR-0003): runs in EVERY run, never skipped -------------------------------
 # Fixtures from tests/sign/sigtest-setup.sh, signed through ci/sign.sh (the release's own signing
 # command) with a throwaway key. Inside the VM the device's own podman/containers-image must:
@@ -176,9 +250,7 @@ if [[ -n "${SIGTEST}" ]]; then
         || fail "signature fixtures complete" "digests.env incomplete"
     sig_repo="${reghost}/kiezel-sigtest"
     reg_name="${reghost%%:*}"
-    scp_vm() { scp -q -i "${KEY}" -P "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o LogLevel=ERROR -o BatchMode=yes "$@"; }
-    scp_vm "${SIGTEST}/keys/test.pub" root@127.0.0.1:/etc/pki/kiezel-sigtest.pub \
+    scp_vm "${SIGTEST}/keys/test.pub" root@vsock:/etc/pki/kiezel-sigtest.pub \
         || fail "copy signature-test public key into the VM"
     ssh_vm "grep -q '${reg_name}' /etc/hosts || echo '10.0.2.2 ${reg_name}' >> /etc/hosts
             mkdir -p /etc/containers/registries.conf.d
@@ -244,6 +316,9 @@ reboot_vm() { ssh_vm "systemctl reboot" >/dev/null 2>&1 || true; sleep 20; }
 if [[ -n "${REGISTRY}" ]]; then
     vm_registry="10.0.2.2:${REGISTRY##*:}"
     ssh_vm "mkdir -p /etc/containers/registries.conf.d && printf '[[registry]]\nlocation=\"${vm_registry}\"\ninsecure=true\n' > /etc/containers/registries.conf.d/99-ci.conf"
+    # Test-only policy scope for the local channel: the catch-all is "reject" since Phase 2, and
+    # these scenarios test update/rollback mechanics, not signatures (that is the signature path).
+    ssh_vm "jq --arg s '${vm_registry}/kiezel' '.transports.docker[\$s] = [{type:\"insecureAcceptAnything\"}]' /etc/containers/policy.json > /tmp/p && cp /tmp/p /etc/containers/policy.json"
 
     # -- Step 0: track the test channel, on the good image ------------------------------------
     log "== Update scenarios via ${vm_registry}/kiezel:channel"

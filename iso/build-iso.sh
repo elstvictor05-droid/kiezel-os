@@ -22,6 +22,10 @@ mkdir -p "${OUT}"
 
 FEDORA=45
 NETINST="Fedora-Everything-netinst-x86_64-45-1.4.iso"
+# Pinned SHA-256 of that exact ISO, on top of Fedora's GPG-signed CHECKSUM file: a changed or
+# re-spun upstream file fails the build instead of silently changing what we ship. Bumping
+# Fedora means updating NETINST, CHECKSUM and this value together (one reviewed commit).
+NETINST_SHA256="42abc36792f91575b2f541db19110cc661864819031e57cd5f5c9ec764ebbddf"
 CHECKSUM="Fedora-Everything-45-1.4-x86_64-CHECKSUM"
 BASE_URL="https://dl.fedoraproject.org/pub/fedora/linux/releases/${FEDORA}/Everything/x86_64/iso"
 CACHE="${CACHE:-${HOME}/.cache/kiezel-iso}"
@@ -33,6 +37,7 @@ curl -fsSL -o "${CACHE}/${CHECKSUM}" "${BASE_URL}/${CHECKSUM}"
 curl -fsSL -o "${CACHE}/fedora.gpg" https://fedoraproject.org/fedora.gpg
 gpgv --keyring "${CACHE}/fedora.gpg" "${CACHE}/${CHECKSUM}"
 (cd "${CACHE}" && sha256sum --ignore-missing -c "${CHECKSUM}")
+echo "${NETINST_SHA256}  ${CACHE}/${NETINST}" | sha256sum -c -
 
 # --- 2. Render the kickstart --------------------------------------------------------------
 KS="${OUT}/kiezel.ks"
@@ -64,7 +69,7 @@ for line in lines:
     elif line == "rootpw --lock":
         out += [line, f'sshkey --username=root "{pub}"']
     elif line == "reboot":
-        out += ['bootloader --append="systemd.wants=sshd.service console=ttyS0"', "poweroff"]
+        out += ['bootloader --append="console=ttyS0"', "poweroff"]
     else:
         out.append(line)
 open(ks_path, "w").write("\n".join(out) + "\n")

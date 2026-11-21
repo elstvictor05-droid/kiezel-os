@@ -2,7 +2,7 @@
 # Turn a Kiezel container image (in ROOT podman storage) into a qcow2 test disk with
 # bootc-image-builder. Adds what the boot test needs and nothing else:
 #   - an SSH key for root (test disks only)
-#   - kernel argument systemd.wants=sshd.service (sshd is off in Kiezel)
+#   - console on the serial port (SSH itself goes over virtio-vsock; sshd.service stays off)
 #
 # Usage (needs root, as bootc-image-builder does):
 #   sudo tests/boot/make-test-disk.sh <local-image> <ssh-pubkey-file> <outdir>
@@ -26,7 +26,7 @@ name = "root"
 key = "$(cat "${PUBKEY}")"
 
 [customizations.kernel]
-append = "systemd.wants=sshd.service console=ttyS0"
+append = "console=ttyS0"
 
 [[customizations.filesystem]]
 mountpoint = "/"
