@@ -1,0 +1,31 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "description": "Daily rebuilds of the same Fedora release: bump the digest, auto-merge only when CI (build + boot test) is green.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/ublue-os/kinoite-main"],
+      "matchUpdateTypes": ["digest"],
+      "schedule": ["before 6am"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "A new Fedora release (e.g. 45 -> 46) is a real upgrade: never auto-merge, a human tests it first.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/ublue-os/kinoite-main"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["fedora-upgrade"]
+    },
+    {
+      "description": "GitHub Actions stay pinned to commit SHAs; group minor/patch bumps weekly.",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "schedule": ["before 6am on monday"]
+    }
+  ]
+}
