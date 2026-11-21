@@ -1,0 +1,31 @@
+# --- Secrets: never commit ---------------------------------------------------
+*.key
+*.private
+cosign.key
+cosign*.key
+.env
+.env.*
+*.pem
+!system_files/**/*.pub
+
+# --- Build output -------------------------------------------------------------
+output/
+*.qcow2
+*.raw
+*.iso
+*.img
+*.vmdk
+_build/
+.cache/
+
+# --- Local test VMs and reports ---------------------------------------------
+tests/out/
+*.log
+
+# --- Personal planning notes (Dutch, not part of the project) ----------------
+notes/
+
+# --- Editors -----------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
