@@ -29,6 +29,11 @@ ostreecontainer --url=@KIEZEL_IMAGE@ --transport=registry
 rootpw --lock
 firstboot --disable
 
+# Always boot to the graphical login. Without this, Anaconda picks multi-user.target for text
+# installs ("no default systemd target set & in text/remote desktop mode"), and the user would
+# get no login screen at all.
+xconfig --startxonboot
+
 reboot
 
 %pre --log=/tmp/kiezel-pre.log
@@ -58,16 +63,32 @@ docker:
     use-sigstore-attachments: true
 REG
 echo "Kiezel installer trust policy installed"
-# Also to the kernel log, so automated tests can see it on the serial console.
-echo "Kiezel installer trust policy installed" > /dev/kmsg || true
+# Also to the console, so automated tests can see it on the serial console.
+echo "Kiezel installer trust policy installed" > /dev/console 2>/dev/null || true
+%end
+
+%post --nochroot --log=/tmp/kiezel-post-nochroot.log
+set -eu
+# Anaconda writes the chosen language/keyboard to the PHYSICAL sysroot's /etc
+# (/mnt/sysroot/etc), not to the bootc deployment's /etc, so the installed system would never
+# see the user's choice (found by the installer test: nl_BE chosen, nl_NL on the system).
+# Copy Anaconda's own result into every deployment, so whatever the user picked is kept.
+for dep in /mnt/sysroot/ostree/deploy/*/deploy/*.0; do
+    for f in locale.conf vconsole.conf; do
+        if [ -f "/mnt/sysroot/etc/${f}" ]; then cp -f "/mnt/sysroot/etc/${f}" "${dep}/etc/${f}"; fi
+    done
+    echo "${dep}:"; cat "${dep}/etc/locale.conf" 2>/dev/null || true
+done
 %end
 
 %post --log=/root/kiezel-post.log
 set -eu
-# Make sure the installed system tracks the SIGNED image (ADR-0004). If the installer recorded
-# an unverified origin, switch it to the enforced one before the first boot.
-if bootc status --json | grep -q '"signature": *null'; then
-    bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry @KIEZEL_IMAGE@
-fi
-bootc status
+# bootc mounts / itself (composefs over the ostree deployment). Anaconda still writes a "/" line
+# to fstab; systemd-remount-fs then fails ("overlay: No changes allowed in reconfigure") and
+# the system boots "degraded". Drop that one line; /boot, /boot/efi and /home stay.
+sed -i -E '/^[^#[:space:]]+[[:space:]]+\/[[:space:]]/d' /etc/fstab
+echo "fstab after Kiezel fix:"; cat /etc/fstab
+echo "locale: $(cat /etc/locale.conf 2>/dev/null)"
+# Signatures: enforced on the installed system by /etc/containers/policy.json (sigstoreSigned for
+# the Kiezel scope), which every pull consults. Proven by tests/iso/post-install-check.sh.
 %end
