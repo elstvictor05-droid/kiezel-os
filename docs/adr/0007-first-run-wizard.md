@@ -84,4 +84,7 @@ source and package findings. The on-screen run in a VM, with screenshots, is sti
   **Kiezel workaround:** `kiezel-locale-capture.service` saves the installer's LANG before
   Plasma Setup runs. `kiezel-locale-restore.path` restores the *region* after setup, but only
   when the language is unchanged (nl→nl). A different language chosen in Plasma Setup is kept.
-  To report upstream (bugs.kde.org, product plasma-setup).
+  **Reproduced on vanilla Fedora Kinoite 45** (no Kiezel changes; `tests/upstream-repro/`):
+  "System language detected as: nl_BE" → "Overriding to base language nl" → "Successfully set
+  system default language" → `LANG=nl_NL.UTF-8`. Related upstream report: KDE bug 516378 (missing
+  regional variants). Report text prepared for the owner to file (product "Plasma Setup").

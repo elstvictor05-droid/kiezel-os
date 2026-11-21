@@ -67,20 +67,6 @@ echo "Kiezel installer trust policy installed"
 echo "Kiezel installer trust policy installed" > /dev/console 2>/dev/null || true
 %end
 
-%post --nochroot --log=/tmp/kiezel-post-nochroot.log
-set -eu
-# Anaconda writes the chosen language/keyboard to the PHYSICAL sysroot's /etc
-# (/mnt/sysroot/etc), not to the bootc deployment's /etc, so the installed system would never
-# see the user's choice (found by the installer test: nl_BE chosen, nl_NL on the system).
-# Copy Anaconda's own result into every deployment, so whatever the user picked is kept.
-for dep in /mnt/sysroot/ostree/deploy/*/deploy/*.0; do
-    for f in locale.conf vconsole.conf; do
-        if [ -f "/mnt/sysroot/etc/${f}" ]; then cp -f "/mnt/sysroot/etc/${f}" "${dep}/etc/${f}"; fi
-    done
-    echo "${dep}:"; cat "${dep}/etc/locale.conf" 2>/dev/null || true
-done
-%end
-
 %post --log=/root/kiezel-post.log
 set -eu
 # bootc mounts / itself (composefs over the ostree deployment). Anaconda still writes a "/" line
