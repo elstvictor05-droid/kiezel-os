@@ -1,0 +1,8 @@
+[Unit]
+Description=Kiezel: route DNS to Quad9, fall back to the network's DNS when Quad9 does not answer
+After=systemd-resolved.service NetworkManager.service
+Wants=systemd-resolved.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/kiezel/dns-route

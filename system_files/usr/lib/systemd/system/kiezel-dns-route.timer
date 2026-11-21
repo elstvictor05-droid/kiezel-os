@@ -1,0 +1,9 @@
+[Unit]
+Description=Kiezel: re-check DNS routing every 5 minutes (back to Quad9 after a captive-portal login)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

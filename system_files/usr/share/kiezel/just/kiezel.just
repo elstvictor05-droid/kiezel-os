@@ -11,15 +11,20 @@ kiezel-containers-open:
 kiezel-containers-close:
     /usr/libexec/kiezel/container-registries close
 
+# Default DNS: Quad9 (encrypted when possible); the router for local names and as automatic fallback
+[group('Kiezel: privacy')]
+kiezel-dns-quad9:
+    pkexec /usr/libexec/kiezel/dns-mode quad9
+
+# Privacy choice "off": use only the network's (router's) DNS, as without Kiezel
+[group('Kiezel: privacy')]
+kiezel-dns-router:
+    pkexec /usr/libexec/kiezel/dns-mode router
+
 # Advanced profile: only encrypted DNS to a fixed provider (quad9 or cloudflare); no fallback
 [group('Kiezel: advanced')]
 kiezel-dns-strict provider="quad9":
     pkexec /usr/libexec/kiezel/dns-mode strict {{ provider }}
-
-# Default DNS: try encryption, fall back to plain DNS when the network does not offer it
-[group('Kiezel: advanced')]
-kiezel-dns-opportunistic:
-    pkexec /usr/libexec/kiezel/dns-mode opportunistic
 
 # Optional: block every USB device that is not plugged in right now
 [group('Kiezel: security')]
@@ -30,7 +35,7 @@ kiezel-usbguard-enable:
 kiezel-usbguard-disable:
     pkexec /usr/libexec/kiezel/usbguard-mode disable
 
-# Allow automatic discovery of network printers (opens UDP 5353 for mDNS)
+# Find network printers automatically on THIS home network (mDNS in zone kiezel-home); "off" to undo
 [group('Kiezel: printers')]
 kiezel-printer-discovery state="on":
     pkexec /usr/libexec/kiezel/printer-discovery {{ state }}
