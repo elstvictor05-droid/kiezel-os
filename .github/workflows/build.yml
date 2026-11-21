@@ -40,6 +40,8 @@ jobs:
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          # SSH to test VMs goes over virtio-vsock, so the Kiezel firewall stays fully enabled.
+          sudo modprobe vhost_vsock && sudo chmod 0666 /dev/vhost-vsock
           sudo apt-get update -q
           sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf swtpm skopeo
 
@@ -89,10 +91,15 @@ jobs:
           sudo env "PATH=${PATH}" tests/sign/sigtest-setup.sh kiezel-registry.test:5000 tests/out/sigtest "${LOCAL}"
           sudo chown -R "$(id -u):$(id -g)" tests/out/sigtest
 
-      - name: Boot test (Secure Boot, TPM2, AVC, greenboot, signature path, update, power-off, rollback, no loop)
+      - name: Fetch Lynis (pinned)
+        run: |
+          curl -fsSL -o tests/out/lynis.tar.gz https://downloads.cisofy.com/lynis/lynis-3.1.7.tar.gz
+          echo "b5314a07fd85fa3ffc7da57b508f0108ec3280d84e4af823f805d95cbbc2428c  tests/out/lynis.tar.gz" | sha256sum -c -
+
+      - name: Boot test (Secure Boot, TPM2, AVC, greenboot, hardening, signature path, update, rollback)
         run: |
           tests/boot/boot-test.sh --disk tests/out/disk/disk.qcow2 --key tests/out/ci_key \
-            --registry 127.0.0.1:5000 --sigtest tests/out/sigtest --workdir tests/out/boot \
+            --registry 127.0.0.1:5000 --sigtest tests/out/sigtest --lynis tests/out/lynis.tar.gz --workdir tests/out/boot \
             ${{ github.event.pull_request.head.repo.fork == true && '--allow-skip' || '' }}
 
       - name: Upload boot test report
@@ -104,6 +111,7 @@ jobs:
             tests/out/boot/report.txt
             tests/out/boot/serial-*.log
             tests/out/boot/avc*.txt
+            tests/out/boot/lynis*
           if-no-files-found: ignore
 
       - name: Push unsigned candidate (main only)

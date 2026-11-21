@@ -9,7 +9,8 @@ set -uo pipefail
 
 WORKDIR="" KEY=""
 PASSPHRASE="kiezel-ci-test"          # CI test kickstart only (iso/build-iso.sh --test)
-SSH_PORT="${SSH_PORT:-2223}"
+VSOCK_CID="${VSOCK_CID:-4}"   # SSH over virtio-vsock: firewall on, sshd.service off, as in production
+HERE="$(cd "$(dirname "$0")" && pwd)"
 OVMF_CODE="${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.secboot.fd}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -27,8 +28,9 @@ log()  { printf '%s\n' "$*" | tee -a "${REPORT}"; }
 pass() { log "PASS  $1"; }
 fail() { log "FAIL  $1${2:+  ($2)}"; fails=$((fails + 1)); }
 ssh_vm() {
-    ssh -i "${KEY}" -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=5 -o LogLevel=ERROR -o BatchMode=yes root@127.0.0.1 "$@"
+    ssh -i "${KEY}" -o "ProxyCommand=python3 -I ${HERE}/../boot/vsock-proxy.py ${VSOCK_CID} 22" \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=5 -o LogLevel=ERROR -o BatchMode=yes root@vsock "$@"
 }
 cleanup() {
     [[ -f "${WORKDIR}/qemu-boot.pid" ]] && kill "$(cat "${WORKDIR}/qemu-boot.pid")" 2>/dev/null
@@ -47,7 +49,8 @@ qemu-system-x86_64 \
     -drive "file=${WORKDIR}/disk.qcow2,if=virtio,format=qcow2" \
     -chardev "socket,id=chrtpm,path=${WORKDIR}/swtpm-boot.sock" \
     -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
-    -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" -device virtio-net-pci,netdev=n0 \
+    -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+    -device "vhost-vsock-pci,guest-cid=${VSOCK_CID}" \
     -chardev "socket,id=ser0,path=${WORKDIR}/serial.sock,server=on,wait=off,logfile=${SERIAL}" \
     -serial chardev:ser0 -display none \
     -daemonize -pidfile "${WORKDIR}/qemu-boot.pid" || { echo "QEMU failed" >&2; exit 1; }
