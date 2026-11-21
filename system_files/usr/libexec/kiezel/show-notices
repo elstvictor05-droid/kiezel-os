@@ -1,0 +1,29 @@
+#!/usr/bin/bash
+# Show Kiezel system notices to the logged-in user as normal desktop notifications, once per
+# notice, in plain language. Runs as a systemd user service at login (kiezel-notices.service).
+set -uo pipefail
+
+notices=/var/lib/kiezel/notices
+stamp_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/kiezel"
+mkdir -p "${stamp_dir}"
+
+for notice in "${notices}"/*; do
+    [[ -f "${notice}" ]] || continue
+    name="$(basename "${notice}")"
+    stamp="${stamp_dir}/seen-${name}"
+    # Already shown this version of the notice?
+    [[ -f "${stamp}" && ! "${notice}" -nt "${stamp}" ]] && continue
+
+    text_file="/usr/share/kiezel/notices/${name}"
+    [[ -f "${text_file}" ]] || continue
+    case "${LANG:-en}" in
+        nl*) lang="nl" ;;
+        *)   lang="en" ;;
+    esac
+    title="$(sed -n "s/^${lang}.title=//p" "${text_file}")"
+    body="$(sed -n "s/^${lang}.body=//p" "${text_file}")"
+
+    notify-send --app-name="Kiezel" --icon=system-software-update --urgency=normal \
+        --expire-time=0 "${title}" "${body}" && touch "${stamp}"
+done
+exit 0
