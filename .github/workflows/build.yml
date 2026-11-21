@@ -107,7 +107,10 @@ jobs:
       - name: "Captive-portal test (simulated Free Wi-Fi: DNS hijack + HTTP redirect, then login)"
         run: |
           sudo tests/portal/portal-test.sh --disk tests/out/disk/disk.qcow2 --key tests/out/ci_key --workdir tests/out/portal
-          sudo chown -R "$(id -u):$(id -g)" tests/out/portal
+
+      - name: Make test output readable for the artifact upload
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" tests/out || true
 
       - name: Upload boot test report
         if: always()

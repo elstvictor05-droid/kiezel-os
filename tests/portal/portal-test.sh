@@ -66,20 +66,23 @@ sysctl -qw net.ipv4.ip_forward=1
 iptables -I FORWARD 1 -i "${BR}" -j DROP          # before login: no internet, so Quad9 unreachable
 
 dnsmasq_hijack() {
-    dnsmasq --pid-file="${WORKDIR}/dnsmasq.pid" --interface="${BR}" --bind-interfaces --no-resolv --no-hosts \
+    dnsmasq --user=root --log-dhcp --pid-file="${WORKDIR}/dnsmasq.pid" --interface="${BR}" --bind-interfaces --no-resolv --no-hosts \
         --dhcp-range="${NET}.50,${NET}.99,12h" --dhcp-option=option:router,"${NET}.1" \
         --dhcp-option=option:dns-server,"${NET}.1" --domain=freewifi.test \
         --address="/#/${NET}.1" --log-facility="${WORKDIR}/dnsmasq.log"
 }
 dnsmasq_open() {
     pkill -F "${WORKDIR}/dnsmasq.pid" 2>/dev/null; sleep 1
-    dnsmasq --pid-file="${WORKDIR}/dnsmasq.pid" --interface="${BR}" --bind-interfaces --no-hosts \
+    dnsmasq --user=root --log-dhcp --pid-file="${WORKDIR}/dnsmasq.pid" --interface="${BR}" --bind-interfaces --no-hosts \
         --resolv-file=/run/systemd/resolve/resolv.conf \
         --dhcp-range="${NET}.50,${NET}.99,12h" --dhcp-option=option:router,"${NET}.1" \
         --dhcp-option=option:dns-server,"${NET}.1" --domain=freewifi.test \
         --log-facility="${WORKDIR}/dnsmasq.log"
 }
-dnsmasq_hijack
+dnsmasq_hijack || { log "FAIL  dnsmasq did not start"; cat "${WORKDIR}/dnsmasq.log" 2>/dev/null | tee -a "${REPORT}"; exit 1; }
+sleep 1
+[[ -s "${WORKDIR}/dnsmasq.pid" ]] && kill -0 "$(cat "${WORKDIR}/dnsmasq.pid")" 2>/dev/null \
+    || { log "FAIL  dnsmasq not running"; tail -20 "${WORKDIR}/dnsmasq.log" 2>/dev/null | tee -a "${REPORT}"; exit 1; }
 python3 -I "${HERE}/portal-server.py" "${NET}.1" "${WORKDIR}/state" 2>"${WORKDIR}/http.log" &
 echo $! > "${WORKDIR}/http.pid"
 
@@ -118,7 +121,14 @@ for _ in $(seq 1 30); do
     [[ -n "${link}" ]] && break; sleep 3
 done
 addr="$(ssh_vm "ip -4 -o addr show dev ${link} | awk '{print \$4}'" 2>&1)"
-[[ "${addr}" == "${NET}."* ]] && pass "VM got an address from the portal network (${link} ${addr})" || fail "DHCP on portal network" "${link} ${addr}"
+if [[ "${addr}" == "${NET}."* ]]; then
+    pass "VM got an address from the portal network (${link} ${addr})"
+else
+    fail "DHCP on portal network" "link='${link}' addr='${addr}'"
+    { echo "--- VM network state ---"; ssh_vm 'ip -br link; ip -br addr; nmcli -t device; journalctl -b -u NetworkManager --no-pager -o cat | tail -25'
+      echo "--- dnsmasq log ---"; tail -30 "${WORKDIR}/dnsmasq.log"; } >> "${REPORT}" 2>&1
+    exit 1   # every later check depends on the network; stop instead of cascading failures
+fi
 
 # 1. Quad9 unreachable -> DNS falls back to the network's DNS.
 ssh_vm 'systemctl start kiezel-dns-route.service' >/dev/null 2>&1
