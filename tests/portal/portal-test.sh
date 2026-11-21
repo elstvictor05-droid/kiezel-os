@@ -132,9 +132,10 @@ fi
 
 # 1. Quad9 unreachable -> DNS falls back to the network's DNS.
 ssh_vm 'systemctl start kiezel-dns-route.service' >/dev/null 2>&1
-r="$(poll 60 yes ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'")" \
-    && pass "behind the portal Quad9 is unreachable -> automatic fallback to the network's DNS" \
-    || fail "DNS fallback behind the portal" "default-route=${r}"
+fallback_seen=0
+if r="$(poll 60 yes ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'")"; then
+    fallback_seen=1; pass "behind the portal Quad9 is unreachable -> automatic fallback to the network's DNS"
+else fail "DNS fallback behind the portal" "default-route=${r}"; fi
 r="$(poll 30 "${NET}.1" ssh_vm "getent hosts fedoraproject.org | cut -d' ' -f1")" \
     && pass "names resolve through the portal's DNS (hijacked to ${r}, as real portals do)" \
     || fail "names resolve via portal DNS" "${r}"
@@ -151,7 +152,10 @@ ssh_vm "curl -s --max-time 10 http://${NET}.1/accept" >/dev/null 2>&1
 r="$(poll 120 full ssh_vm 'nmcli networking connectivity check')" \
     && pass "after login: full connectivity" || fail "full connectivity after login" "connectivity=${r}"
 # The NetworkManager dispatcher (connectivity-change) should switch back without help; give it 60 s.
-if r="$(poll 60 no ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'")"; then
+# Only meaningful if the fallback was really observed before (otherwise "no" proves nothing).
+if [[ ${fallback_seen} -eq 0 ]]; then
+    fail "automatic return to Quad9 after login" "not testable: the fallback was never observed"
+elif r="$(poll 60 no ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'")"; then
     pass "after login Kiezel switched back to Quad9 by itself (dispatcher on connectivity change)"
 else
     ssh_vm 'systemctl start kiezel-dns-route.service' >/dev/null 2>&1
