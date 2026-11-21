@@ -42,6 +42,30 @@ Option B, with this key setup:
 Both public keys ship in the image (`/etc/pki/containers/`) and are committed to the repo.
 Signatures are also logged in Rekor (cosign default), which makes them publicly auditable.
 
+### Protecting the primary key in GitHub
+
+- The key and its password are **environment secrets** of a protected GitHub environment named
+  `release`, not repository secrets. Only jobs that declare `environment: release` can read them.
+- The `release` environment has:
+  - **required reviewers** (the owner), so every signing run waits for a manual approval;
+  - a **deployment branch rule**: only `main`. A pull request, including one from a fork,
+    can never reach the key.
+- **Branch protection on `main`:**
+  - changes go through pull requests;
+  - required status checks (validate, build, boot test) must pass;
+  - no force-push, no deletion;
+  - the rules also apply to administrators.
+- Workflows run with least privilege (`permissions:` per job). Third-party actions are pinned
+  to commit SHAs.
+- **Trade-off:** every signed release needs a human click. If the owner is unavailable,
+  devices get no new image, though they keep running the last good one. For a project with one
+  maintainer this is the right side of the trade-off: a compromised workflow or dependency
+  cannot sign by itself.
+
+The primary key is generated in RAM (`/dev/shm`) on the maintainer's machine, piped directly
+into `gh secret set --env release`, and then shredded. It never touches persistent disk or
+the repository.
+
 ### Rotation plan (routine, at least yearly, or when someone with access leaves)
 
 1. Generate a new primary key and put it in the GitHub secret.
