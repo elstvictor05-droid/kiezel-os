@@ -1,0 +1,25 @@
+#!/usr/bin/bash
+# ExecCondition for rpm-ostreed-automatic.service (ADR-0008).
+# Skip the automatic update when the available image is one that already failed its health
+# checks on this machine (recorded by greenboot's red.d hook). Without this, the timer would
+# stage the same broken image again after every rollback: a rollback loop.
+#
+# Exit 0 = go ahead with the update; exit 1 = skip this run (systemd treats it as "condition
+# failed", not as an error).
+set -uo pipefail
+
+failed=/var/lib/kiezel/failed-digests
+[[ -s "${failed}" ]] || exit 0
+
+# Ask the registry which digest the tracked tag points to now (metadata only, no download).
+if ! bootc upgrade --check >/dev/null 2>&1; then
+    exit 0   # offline or registry error: let the normal update logic handle it
+fi
+available="$(bootc status --format json | jq -r '.status.booted.cachedUpdate.imageDigest // empty')"
+[[ -n "${available}" ]] || exit 0
+
+if grep -qxF "${available}" "${failed}"; then
+    echo "kiezel-update-gate: ${available} failed on this computer before; skipping it until a newer image is published"
+    exit 1
+fi
+exit 0
