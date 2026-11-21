@@ -5,7 +5,7 @@
 # Everything else is preset. The daily (non-admin) account is created on first boot by
 # KDE Plasma Setup (ADR-0007).
 #
-# Placeholders replaced by build-iso.sh: @KIEZEL_IMAGE@ @KIEZEL_PUBKEY@
+# Placeholders (KIEZEL_IMAGE, KIEZEL_REPO, KIEZEL_PUBKEY between @ signs) are filled in by build-iso.sh.
 #
 # NEVER add --no-signature-verification to ostreecontainer: tests/iso/check-kickstart.sh
 # fails the build if it appears.
