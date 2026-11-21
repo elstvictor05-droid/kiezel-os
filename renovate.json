@@ -1,6 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
   "dependencyDashboard": true,
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
@@ -8,38 +11,84 @@
     {
       "description": "Container images pinned as name:tag@sha256 inside shell scripts and workflow run steps (bootc-image-builder, test registry).",
       "customType": "regex",
-      "managerFilePatterns": ["/^tests/.+\\.sh$/", "/^iso/.+\\.sh$/", "/^\\.github/workflows/.+\\.ya?ml$/"],
+      "managerFilePatterns": [
+        "/^tests/.+\\.sh$/",
+        "/^iso/.+\\.sh$/",
+        "/^\\.github/workflows/.+\\.ya?ml$/"
+      ],
       "matchStrings": [
         "(?<depName>(?:quay\\.io|docker\\.io|ghcr\\.io|registry\\.fedoraproject\\.org)/[a-z0-9._/-]+):(?<currentValue>[a-z0-9._-]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Pinned cosign release used for signing (ADR-0003). A bump is only safe if the PR's signature-path tests (classic .sig tag in the registry, device-style verify, VM accept/reject) pass.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "cosign-release:\\s*(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "sigstore/cosign",
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
     {
       "description": "Base image digest bumps: weekly, only after the new digest is 3 days old, and auto-merged ONLY through GitHub's native auto-merge, which waits for the required status checks on main (build + boot test). See docs/adr/0001-base-image.md.",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["ghcr.io/ublue-os/kinoite-main"],
-      "matchUpdateTypes": ["digest"],
-      "schedule": ["before 6am on monday"],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/ublue-os/kinoite-main"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "schedule": [
+        "before 6am on monday"
+      ],
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
     },
     {
       "description": "A new Fedora release (e.g. 45 -> 46) is a real upgrade: never auto-merged; a human tests it first.",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["ghcr.io/ublue-os/kinoite-main"],
-      "matchUpdateTypes": ["major"],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/ublue-os/kinoite-main"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "labels": ["fedora-upgrade"]
+      "labels": [
+        "fedora-upgrade"
+      ]
     },
     {
       "description": "GitHub Actions stay pinned to commit SHAs; grouped weekly, never auto-merged (they run with access to CI).",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "GitHub Actions",
-      "schedule": ["before 6am on monday"],
+      "schedule": [
+        "before 6am on monday"
+      ],
       "automerge": false
+    },
+    {
+      "description": "cosign changes the signature format devices must read: never auto-merge.",
+      "matchPackageNames": [
+        "sigstore/cosign"
+      ],
+      "automerge": false,
+      "labels": [
+        "signing"
+      ]
     }
   ]
 }
