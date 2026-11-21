@@ -1,0 +1,155 @@
+name: build
+
+# Builds the Kiezel image, runs static and boot tests, and (on main) hands the tested digest
+# to the protected `release` environment for signing. The `build + boot test` job is a
+# REQUIRED status check on main, so Renovate can only auto-merge what passes it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 2"      # weekly rebuild: picks up Fedora/Universal Blue fixes
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/elstvictor05-droid/kiezel
+  LOCAL: localhost/kiezel:ci
+
+jobs:
+  build:
+    name: build + boot test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write        # push UNSIGNED candidates on main only; devices reject them until signed
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free disk space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Install test tooling and enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf swtpm skopeo
+
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Verify Universal Blue signature on the pinned base image
+        run: |
+          base="$(awk '/^FROM ghcr.io\/ublue-os\//{print $2; exit}' Containerfile)"
+          echo "base: ${base}"
+          cosign verify --key tests/keys/ublue-os.pub "${base}" > /dev/null
+          echo "Base image signature OK"
+
+      - name: Build image
+        run: |
+          sudo podman build --pull=newer -t "${LOCAL}" \
+            --build-arg KIEZEL_VERSION="$(date -u +%Y%m%d).${GITHUB_SHA::7}" .
+
+      - name: Static image checks
+        run: sudo podman run --rm -v ./tests/image:/t:ro,z "${LOCAL}" /t/check-image.sh
+
+      - name: Kickstart must keep signature verification
+        run: tests/iso/check-kickstart.sh iso/kiezel.ks
+
+      - name: Build test disk (qcow2)
+        run: |
+          mkdir -p tests/out
+          ssh-keygen -q -t ed25519 -N '' -f tests/out/ci_key
+          sudo tests/boot/make-test-disk.sh "${LOCAL}" tests/out/ci_key.pub tests/out/disk
+          sudo chown -R "$(id -u):$(id -g)" tests/out
+
+      - name: Build deliberately broken image and serve it from a local registry
+        run: |
+          sudo podman build -f tests/boot/Containerfile.broken --build-arg BASE="${LOCAL}" -t localhost:5000/kiezel:broken .
+          sudo podman run -d --name registry -p 5000:5000 \
+            docker.io/library/registry:3@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
+          sudo podman push --tls-verify=false localhost:5000/kiezel:broken
+
+      - name: Boot test (Secure Boot, TPM2, AVC, greenboot, signature policy, rollback)
+        run: |
+          tests/boot/boot-test.sh --disk tests/out/disk/disk.qcow2 --key tests/out/ci_key \
+            --rollback-image 10.0.2.2:5000/kiezel:broken --workdir tests/out/boot
+
+      - name: Upload boot test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boot-test-report
+          path: |
+            tests/out/boot/report.txt
+            tests/out/boot/serial.log
+          if-no-files-found: ignore
+
+      - name: Push unsigned candidate (main only)
+        id: push
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          tag="candidate-${GITHUB_SHA::7}"
+          sudo podman push --digestfile /tmp/digest "${LOCAL}" "${IMAGE}:${tag}"
+          echo "digest=$(cat /tmp/digest)" >> "$GITHUB_OUTPUT"
+          # A bootable image that is NEVER signed: the installer test must refuse it (ADR-0005).
+          printf 'FROM %s\nLABEL kiezel.ci="unsigned-bootable"\n' "${LOCAL}" | sudo podman build -t "${IMAGE}:ci-unsigned-bootable" -f - .
+          sudo podman push "${IMAGE}:ci-unsigned-bootable"
+
+  release:
+    name: sign + promote
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: release       # protected: owner approval required, main only, holds the key
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Sign the tested digest
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          COSIGN_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          test -n "${DIGEST}"
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${DIGEST}"
+          cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
+          echo "Signed and verified ${IMAGE}@${DIGEST}"
+
+      - name: Promote to stable and dated tags
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          for tag in stable "$(date -u +%Y%m%d)"; do
+            skopeo copy --preserve-digests "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:${tag}"
+          done
+
+      - name: Publish signature canaries (used by the boot test)
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          COSIGN_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for kind in signed unsigned; do
+            printf 'FROM scratch\nLABEL kiezel.ci="canary-%s"\nCOPY LICENSE /LICENSE\n' "${kind}" > /tmp/Canary
+            podman build -q -f /tmp/Canary -t "${IMAGE}:ci-canary-${kind}" .
+            podman push --digestfile "/tmp/canary-${kind}" "${IMAGE}:ci-canary-${kind}"
+          done
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${IMAGE}@$(cat /tmp/canary-signed)"
