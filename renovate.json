@@ -4,6 +4,17 @@
   "dependencyDashboard": true,
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
+  "customManagers": [
+    {
+      "description": "Container images pinned as name:tag@sha256 inside shell scripts and workflow run steps (bootc-image-builder, test registry).",
+      "customType": "regex",
+      "managerFilePatterns": ["/^tests/.+\\.sh$/", "/^iso/.+\\.sh$/", "/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "(?<depName>(?:quay\\.io|docker\\.io|ghcr\\.io|registry\\.fedoraproject\\.org)/[a-z0-9._/-]+):(?<currentValue>[a-z0-9._-]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
   "packageRules": [
     {
       "description": "Base image digest bumps: weekly, only after the new digest is 3 days old, and auto-merged ONLY through GitHub's native auto-merge, which waits for the required status checks on main (build + boot test). See docs/adr/0001-base-image.md.",
