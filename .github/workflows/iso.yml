@@ -6,6 +6,7 @@ name: iso
 #   refuse-unsigned   the same ISO pointed at an UNSIGNED bootable image must refuse to install
 
 on:
+  workflow_call:          # used by release.yml: a tagged release cannot publish without these tests
   schedule:
     - cron: "41 5 * * 3"
   workflow_dispatch:
