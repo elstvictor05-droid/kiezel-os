@@ -26,6 +26,8 @@
 | A7 | Compromised upstream (Universal Blue, Fedora) | Malicious base image or package | **Partly** | Base signature verified; base pinned by digest; Renovate bumps are at least 3 days old and pass the full boot test; owner approval before release | CI |
 | A8 | A broken update (no attacker) | System does not boot or has no login | **Yes** | greenboot health checks, automatic rollback, failed digest never staged again | Boot test: rollback, no loop, no false rollback |
 | A9 | Someone with a few minutes of physical access while the PC is off (evil maid) | Boots another OS, tampers with the boot chain | **Partly** | Secure Boot with Fedora's shim; TPM2 sealed to PCR 7. **Never TPM auto-unlock together with auto-login** (see §4) | Boot test: Secure Boot on |
+| A12 | Compromised Flathub publisher or Flathub infrastructure | Ships a malicious app update (e.g. Firefox, ADR-0011) | **Partly** | **Flathub is a trusted party.** Verified publishers only, the Flatpak sandbox, signed Flathub repository. **Flatpak updates have no greenboot rollback:** a broken or malicious app update is not reverted automatically (an admin can pin the previous commit) | Phase 3: curated list of verified apps |
+| A13 | DNS resolver operator (Quad9) | Logs the names a user looks up | **Accepted, visible** | Quad9 replaces the ISP/router as the party that sees DNS (ADR-0012). The trade-off is shown in the welcome wizard and can be switched off (`ujust kiezel-dns-router`) | Boot test: modes and fallback |
 | A10 | A helper or family member with the admin password | Anything | **No** | Trusted by design | — |
 | A11 | State-level attacker with firmware implants | Persistent firmware compromise | **No** | Out of scope for a desktop for older users (fwupd keeps firmware current) | — |
 
@@ -33,8 +35,8 @@
 
 - **The admin user installing unsafe software.** The admin is trusted. Advanced users can open
   container registries for themselves (ADR-0004).
-- **Privacy towards Fedora, Flathub, Mozilla and LVFS servers** (update checks, metadata). DNS
-  goes to the network's resolver unless strict DoT is chosen (hardening.md §3).
+- **Privacy towards Fedora, Flathub, Mozilla, LVFS and Quad9** (update checks, metadata, DNS
+  lookups). DNS goes to Quad9 by default, with the router as fallback (ADR-0012).
 - **Live attacks on an unlocked, logged-in session** (shoulder surfing, a stolen *running*
   laptop). Screen lock defaults are set in Phase 3.
 
@@ -71,4 +73,5 @@ then only need the hardware. The mechanism, built in Phases 3 and 4:
 | Daily account without admin rights not enforced yet | Plasma Setup creates a `wheel` user by default | Phase 3 (Plasma Setup `UserGroups`, account page) |
 | No TPM2 auto-unlock yet: passphrase on every boot | Usability, not security | Phase 4 |
 | Only VMs tested | No old hardware tested yet | v0.1 blocker: test on a real old PC |
-| Firefox security updates follow our image cadence (RPM) | ADR-0011 pending | Flatpak Firefox (Phase 3, if approved) |
+| Firefox security updates follow our image cadence (RPM) | Flatpak switch decided (ADR-0011) | Phase 3, with the curated app list |
+| Printer discovery off by default | Owner rule: no open ports | Phase 3 welcome page "Do you have a network printer at home?" (home zone only) |

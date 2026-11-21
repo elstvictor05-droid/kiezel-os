@@ -45,23 +45,20 @@ the firewall enabled. SSH goes over virtio-vsock, so tests never need an open ne
 |---|---|---|---|---|
 | Firewall zone `kiezel` | Default zone with target REJECT; only `dhcpv6-client`. Replaces Fedora's `FedoraWorkstation`, which accepts **all incoming TCP/UDP 1025–65535** plus ssh and samba-client | No service on this PC can be reached from the network, even one started by mistake | Peer-to-peer apps that need incoming ports (some games, LAN file sharing) do not work. Printer auto-discovery: see below | Boot test: listener on :8080 answers inside the VM (200) but is unreachable from outside |
 | DHCPv6 exception | `dhcpv6-client` (UDP 546) stays allowed | Needed to get an IPv6 address on DHCPv6 networks | Minimal: only the DHCPv6 client port | Zone file check |
-| Printer discovery (mDNS) | **Off** by default. `ujust kiezel-printer-discovery on` opens UDP 5353 | Rule: no open incoming ports | Network printers are not found automatically; adding them by address still works. **Accessibility trade-off, owner decision pending** | Recipe script tested by hand; CI test in Phase 3 |
+| Printer discovery (mDNS) | **Off** by default. Marking the *current* network as "home" puts only that connection in the firewall zone `kiezel-home`, which also allows mDNS (UDP 5353). Phase 3: a Plasma Welcome page "Do you have a network printer at home?"; `ujust kiezel-printer-discovery on\|off` for helpers | Rule: no open incoming ports by default; home printers still found automatically | **Public Wi-Fi:** if a user marks a café, hotel or train network as "home", everyone on it can see this computer's name and services and reach the mDNS responder (Avahi). Mitigation: the zone is bound to that one connection profile; every other network stays in `kiezel`, and the welcome page asks only at home | Boot test: mDNS closed in `kiezel`; "home" switches only the active connection; "off" restores |
 | sshd off | `sshd.service` not enabled | No remote login surface | Remote help uses an explicit opt-in tool (Phase 3) | Boot test: inactive |
 | SSH over vsock (VMs only) | systemd-ssh-generator binds sshd to AF_VSOCK **inside a VM that has a vsock device** | systemd default; only the hypervisor host can reach it, and it already has full control over the VM | None on real hardware (no vsock) | Used by the tests |
 | ICMP redirects ignored | `accept_redirects=0`, `secure_redirects=0`, `send_redirects=0` | A hostile Wi-Fi cannot reroute traffic with forged redirects | None for a desktop (not a router) | Boot test: sysctl values |
 
-### DNS-over-TLS: opportunistic by default, strict in Advanced
+### DNS: Quad9 over TLS, automatic fallback to the router (ADR-0012)
 
 | Mode | Behaviour | Protects against | Weakness |
 |---|---|---|---|
-| **opportunistic** (default) | systemd-resolved tries TLS (port 853) with the network's DNS server and falls back to plain DNS if it does not answer | Passive eavesdropping **when** the DNS server supports DoT | **Downgrade attack:** a network that blocks port 853 (or a hostile hotspot that drops it) silently forces plain DNS. Most home routers and ISP resolvers do not offer DoT, so on many networks this is effectively plain DNS |
-| **strict** (Advanced: `ujust kiezel-dns-strict quad9\|cloudflare`) | Only encrypted DNS to a named provider, no fallback | Eavesdropping **and** downgrade | DNS (and so the internet) **stops working** on networks that block port 853: some hotels, schools, captive portals. It also sends every DNS query to that provider |
+| **quad9** (default) | Normal lookups go **only** to Quad9, over DNS-over-TLS when port 853 works (opportunistic). Local names (DHCP domain, short names) go to the router. If Quad9 does not answer (captive portal, DNS-filtering network), the router's DNS takes over automatically, and Kiezel switches back after 5 minutes or on the next network change | The ISP/router logging browsing habits; passive eavesdropping on networks where 853 is open | **Downgrade:** a network that blocks port 853 gets plain DNS to Quad9; one that blocks Quad9 entirely gets the router's DNS (the fallback, by design). **Trust:** Quad9 sees the names looked up |
+| **router** (`ujust kiezel-dns-router`) | Only the network's DNS, as without Kiezel | Nothing extra | The ISP/router sees all lookups |
+| **strict** (Advanced: `ujust kiezel-dns-strict quad9\|cloudflare`) | Encrypted DNS to one provider only, no fallback | Eavesdropping **and** downgrade | DNS (so the internet) **stops** on networks that block port 853, and captive portals cannot be reached |
 
-Why this default: for the target users, "the internet stops working in the hotel" is worse
-than a downgrade on hostile networks. HTTPS-only in Firefox still protects the content of
-connections. Strict mode is one command for users and helpers who want it. **Open question
-for the owner:** should Kiezel set a default DoT-capable provider in opportunistic mode? That
-would make the encryption real on most networks, at the cost of sending DNS to a third party.
+The privacy trade-off is shown on a welcome page in Phase 3, with an "off" switch.
 
 ## 4. Kernel (sysctl `/usr/lib/sysctl.d/60-kiezel-hardening.conf`)
 
