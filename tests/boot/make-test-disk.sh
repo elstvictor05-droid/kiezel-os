@@ -19,6 +19,7 @@ podman tag "${SRC}" "${IMAGE}"
 BIB="quay.io/centos-bootc/bootc-image-builder:latest@sha256:a0ee98db5bfb8337e45efb92f0c5d1a19179c85ce80a3360abc628fd1a17cc5c"
 
 mkdir -p "${OUT}"
+OUT="$(realpath "${OUT}")"   # podman needs absolute paths for bind mounts
 cat > "${OUT}/config.toml" <<EOF
 [[customizations.user]]
 name = "root"
