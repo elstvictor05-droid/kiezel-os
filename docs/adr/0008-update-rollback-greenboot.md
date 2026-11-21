@@ -1,6 +1,6 @@
 # ADR-0008: Automatic rollback with greenboot-rs (spike first)
 
-- **Status:** Proposed (decided after the Phase 1 spike)
+- **Status:** Accepted (Phase 1 spike passed the core criteria on 2026-11-21; one criterion still open)
 - **Date:** 2026-11-21
 - **Phase:** 0 (spike in Phase 1)
 
@@ -33,11 +33,24 @@ boot, counts boot attempts, and runs `bootc rollback` and a reboot when the chec
 
 In a QEMU VM with 4 GB RAM, 2 vCPUs, OVMF Secure Boot and swtpm:
 
-- [ ] Healthy image: after an update, `greenboot` reports healthy and the boot counter resets.
-- [ ] Deliberately broken image (a required health check fails, e.g. `sddm` masked): the VM
-      reboots by itself, ends up on the previous deployment, and `bootc status` shows it.
-- [ ] Power-off with a staged update does **not** cause a false rollback.
-- [ ] Record the exact greenboot-rs version tested; pin behaviour expectations in the test.
+- [x] Healthy image: `greenboot-healthcheck` succeeds and `boot-complete.target` is reached
+      (CI boot test).
+- [x] Deliberately broken image (display manager masked): after `bootc switch` and a reboot,
+      the VM failed its health checks, rebooted by itself and **came back on the previous
+      deployment** (CI boot test, `PASS broken update rolled back automatically`).
+      Layer reuse made the switch fast: 261 layers already present, 1 new layer of 201 bytes.
+- [ ] Power-off with a staged update does **not** cause a false rollback (upstream #219 and the
+      download-only case). Test to add before v0.1.
+- [x] Version tested: **greenboot 0.16.4-0.fc45** from Fedora. It ships the bootupd static grub
+      snippet `08_greenboot.cfg`, so boot counting works with Fedora Atomic's static GRUB config.
+
+### Bug found by the spike
+
+The first health check waited for `sddm.service`. **Fedora 45 KDE uses Plasma Login Manager**
+(`plasmalogin.service`), so every boot was "unhealthy" and greenboot rebooted the machine. On
+real devices that would have rolled back every update. The check now uses the generic
+`display-manager.service` alias, and the broken test image masks whatever unit that alias
+points to.
 
 If the spike fails on the false-rollback issue, the fallback is health checks without
 automatic rollback, plus a "go back to previous version" button for the admin. In that case
