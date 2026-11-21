@@ -48,3 +48,20 @@ Before building our own QML wizard, check what KDE ships. Checked 2026-11-21 on 
 - Open question for Phase 3: the account Plasma Setup creates needs to be the **daily account
   without admin rights**, with the admin account created by the installer. We need to verify
   how Plasma Setup's account module assigns groups.
+
+## Spike results (Phase 1, 2026-11-21)
+
+Checked in the shipped package (`plasma-setup-6.8.3-1.fc45`, already in the base image and
+enabled through Fedora's preset) and in the upstream source at commit `12378c7`. These are
+source and package findings. The on-screen run in a VM, with screenshots, is still open.
+
+| Question | Finding | Consequence for Kiezel |
+|---|---|---|
+| Is it in the image? | Yes. `plasma-setup.service` runs before the display manager while `/etc/plasma-setup-done` is absent. | Nothing to install. |
+| Can we add our own page? | Yes, officially: KPackages of type `KDE/PlasmaSetup`, ordered by weight, QML-only allowed (`docs/CUSTOM_MODULES.md`). | A **Kiezel module** for text size, contrast and screen reader can come *before* the account step, so the user sees large text from the start. |
+| Screen reader (Orca) | The setup session's shortcut allow-list explicitly permits `toggleScreenReader` (Meta+Alt+S) and the KWin zoom shortcuts. **There is no on-screen button.** | Our module adds a big "Read the screen aloud" button. Orca and zoom shortcuts already work. |
+| Text size or scaling | The scaling selector is **commented out upstream** (TODO, MR !56). | Our module provides text size: Large or Extra large. |
+| Account type | The created user joins the groups from `/etc/xdg/plasmasetuprc` `[Accounts] UserGroups`. **An empty value falls back to `wheel` (admin).** The page also always shows the text "This user will be an administrator." | Set `UserGroups` to non-admin groups. The admin label must be fixed: either an upstream patch that makes it depend on `wheel`, or our own account page. **Open item for Phase 3.** |
+| Admin already created by the installer | Plasma Setup **hides the account step** when a regular user exists, unless `PLASMA_SETUP_USER_CREATION_OVERRIDE=1` is set. | Set that variable for the service, so that the installer creates the admin and Plasma Setup creates the daily user. |
+
+Next step (Phase 3): run it in the VM, take screenshots, and test Orca with the keyboard only.
