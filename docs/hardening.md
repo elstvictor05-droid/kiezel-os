@@ -84,6 +84,13 @@ slab freelists.
 **Tested:** the boot test reads every line of this file and checks the running value with
 `sysctl -n`.
 
+## 4b. Blocked kernel modules (`/usr/lib/modprobe.d/60-kiezel-blacklist.conf`)
+
+| Modules | Why | Risk | Tested |
+|---|---|---|---|
+| `dccp`, `sctp`, `rds`, `tipc` | Rare network protocols with a history of exploitable bugs. Nothing on a home desktop uses them (WebRTC does SCTP in user space) | Specialist software (telecom, clustering) needs them | Boot test: `modprobe` fails, none loaded |
+| `firewire-core`, `firewire-ohci`, `firewire-sbp2` | FireWire devices get direct memory access, so a plugged-in device can read RAM (DMA attack). Many old PCs still have a FireWire port | Old FireWire camcorders and audio interfaces do not work | Same |
+
 ## 5. Boot parameters (`/usr/lib/bootc/kargs.d/10-kiezel-hardening.toml`)
 
 | Parameter | What | Why | Risk |
@@ -134,6 +141,15 @@ Lynis (pinned 3.1.7, SHA-256 checked) runs in every boot test. The hardening ind
 in the report and the full `lynis-report.dat` is a CI artifact. The score is tracked, not gated:
 Lynis also flags things that do not apply to an image-based desktop (for example separate
 partitions for /var/tmp).
+
+### Lynis findings that do not apply
+
+- **AUTH-9216, "grpck found errors":** on ostree/bootc systems the system groups live in
+  `/usr/lib/group` (nss-altfiles), and `/etc/group` only holds local additions. `grpck` does not
+  know this layout. This is a false positive, not corruption.
+- Suggestions such as separate partitions, a legal banner, process accounting, a malware
+  scanner and remote logging do not fit a single-user, image-based home desktop. They are not
+  adopted.
 
 ## 9. Known upstream exceptions
 

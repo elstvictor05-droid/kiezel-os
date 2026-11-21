@@ -65,6 +65,8 @@ check "no user-namespace restriction in sysctl (Flatpak/Firefox need userns)" \
     bash -c '! grep -rqE "user\.max_user_namespaces|unprivileged_userns_clone" /usr/lib/sysctl.d /etc/sysctl.d'
 check "boot parameters valid TOML, without init_on_free" \
     python3 -c 'import tomllib,sys; k=tomllib.load(open("/usr/lib/bootc/kargs.d/10-kiezel-hardening.toml","rb"))["kargs"]; sys.exit(any(a.startswith("init_on_free") for a in k) or not k)'
+check "unused risky kernel modules blocked (dccp, sctp, rds, tipc, firewire)" \
+    bash -c 'for m in dccp sctp rds tipc firewire-core firewire-ohci firewire-sbp2; do grep -qx "install ${m} /bin/false" /usr/lib/modprobe.d/60-kiezel-blacklist.conf || exit 1; done'
 check "firewalld default zone is kiezel" grep -qx 'DefaultZone=kiezel' /etc/firewalld/firewalld.conf
 check "kiezel zone opens no ports, only dhcpv6-client" \
     bash -c '! grep -q "<port" /usr/lib/firewalld/zones/kiezel.xml && [ "$(grep -c "<service" /usr/lib/firewalld/zones/kiezel.xml)" = 1 ]'

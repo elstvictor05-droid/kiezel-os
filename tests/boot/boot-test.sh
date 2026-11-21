@@ -189,6 +189,10 @@ for karg in $(python3 -c 'import tomllib,sys; print(" ".join(tomllib.load(open(s
 done
 [[ -z "${missing}" ]] && pass "hardening boot parameters active" || fail "hardening boot parameters active" "missing:${missing}"
 
+# Blocked kernel modules cannot be loaded (and none of them is loaded).
+mods="$(ssh_vm 'for m in dccp sctp rds tipc firewire_ohci; do modprobe $m 2>/dev/null && echo LOADED:$m; done; lsmod | grep -E "^(dccp|sctp|rds|tipc|firewire)" | cut -d" " -f1' 2>&1 | xargs)"
+[[ -z "${mods}" ]] && pass "unused risky kernel modules cannot be loaded" || fail "risky kernel modules blocked" "${mods}"
+
 # Firewall: Kiezel zone active, and a real listener inside the VM is NOT reachable from outside.
 # --get-active-zones prints e.g. "kiezel (default)" followed by "  interfaces: ...": take the name only.
 zone="$(ssh_vm "firewall-cmd --get-default-zone; firewall-cmd --get-active-zones | head -1 | awk '{print \$1}'" 2>&1 | xargs)"
