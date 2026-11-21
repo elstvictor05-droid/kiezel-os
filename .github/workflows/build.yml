@@ -44,6 +44,8 @@ jobs:
           sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf swtpm skopeo
 
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4   # pinned (ADR-0003); Renovate bumps it, the signature-path tests must then prove the format
 
       - name: Verify Universal Blue signature on the pinned base image
         run: |
@@ -72,6 +74,9 @@ jobs:
 
       - name: Serve good, good2 and deliberately broken images from a local registry
         run: |
+          # One name for the test registry that resolves on the runner AND (as 10.0.2.2) in the VM,
+          # so signatures made here carry the same image identity the VM verifies.
+          echo '127.0.0.1 kiezel-registry.test' | sudo tee -a /etc/hosts
           sudo podman run -d --name registry -p 5000:5000 \
             docker.io/library/registry:3@sha256:52b489ad8e6f40d1a676702e3ce398ec796ce38f08fbb786e1f324baa12d84b8
           sudo podman tag "${LOCAL}" localhost:5000/kiezel:good
@@ -79,10 +84,16 @@ jobs:
           sudo podman build -f tests/boot/Containerfile.broken --build-arg BASE="${LOCAL}" -t localhost:5000/kiezel:broken .
           for t in good good2 broken; do sudo podman push --tls-verify=false "localhost:5000/kiezel:${t}"; done
 
-      - name: Boot test (Secure Boot, TPM2, AVC, greenboot, signatures, update, power-off, rollback, no loop)
+      - name: Signature path fixtures (format in registry + device-style verify; never skipped)
+        run: |
+          sudo env "PATH=${PATH}" tests/sign/sigtest-setup.sh kiezel-registry.test:5000 tests/out/sigtest "${LOCAL}"
+          sudo chown -R "$(id -u):$(id -g)" tests/out/sigtest
+
+      - name: Boot test (Secure Boot, TPM2, AVC, greenboot, signature path, update, power-off, rollback, no loop)
         run: |
           tests/boot/boot-test.sh --disk tests/out/disk/disk.qcow2 --key tests/out/ci_key \
-            --registry 127.0.0.1:5000 --workdir tests/out/boot
+            --registry 127.0.0.1:5000 --sigtest tests/out/sigtest --workdir tests/out/boot \
+            ${{ github.event.pull_request.head.repo.fork == true && '--allow-skip' || '' }}
 
       - name: Upload boot test report
         if: always()
@@ -119,40 +130,50 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4   # pinned (ADR-0003); Renovate bumps it, the signature-path tests must then prove the format
 
       - name: Log in to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
           echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Sign the tested digest
+      - name: Sign the tested digest (classic format, via the shared signing script)
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
           COSIGN_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
           DIGEST: ${{ needs.build.outputs.digest }}
         run: |
           test -n "${DIGEST}"
-          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${DIGEST}"
-          cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
-          echo "Signed and verified ${IMAGE}@${DIGEST}"
+          ci/sign.sh env://COSIGN_PRIVATE_KEY "${IMAGE}@${DIGEST}"
 
-      - name: Promote to stable and dated tags
+      - name: Classic signature tag is in the registry
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: tests/sign/check-format.sh ghcr.io "${IMAGE#ghcr.io/}" "${DIGEST}"
+
+      - name: Device-style verification (skopeo + Kiezel policy) BEFORE promotion
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          # This is what decides promotion. "cosign verify" is not proof that devices accept the
+          # image (ADR-0003, incident build #11).
+          common=(--policy system_files/etc/containers/policy.json \
+                  --registries-d system_files/etc/containers/registries.d \
+                  --keys system_files/usr/share/pki/containers)
+          tests/sign/device-verify.sh --expect accept --image "${IMAGE}@${DIGEST}" "${common[@]}"
+          tests/sign/device-verify.sh --expect reject --image "${IMAGE}:ci-unsigned-bootable" "${common[@]}"
+          cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null   # secondary check only
+
+      - name: Promote by digest to stable and dated tags
         env:
           DIGEST: ${{ needs.build.outputs.digest }}
         run: |
           for tag in stable "$(date -u +%Y%m%d)"; do
             skopeo copy --preserve-digests "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:${tag}"
+            got="$(skopeo inspect --format '{{.Digest}}' "docker://${IMAGE}:${tag}")"
+            if [[ "${got}" != "${DIGEST}" ]]; then
+              echo "::error::${tag} points to ${got}, expected the verified ${DIGEST}"; exit 1
+            fi
+            echo "${IMAGE}:${tag} -> ${DIGEST} (verified)"
           done
-
-      - name: Publish signature canaries (used by the boot test)
-        env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
-          COSIGN_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-          for kind in signed unsigned; do
-            printf 'FROM scratch\nLABEL kiezel.ci="canary-%s"\nCOPY LICENSE /LICENSE\n' "${kind}" > /tmp/Canary
-            podman build -q -f /tmp/Canary -t "${IMAGE}:ci-canary-${kind}" .
-            podman push --digestfile "/tmp/canary-${kind}" "${IMAGE}:ci-canary-${kind}"
-          done
-          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${IMAGE}@$(cat /tmp/canary-signed)"
