@@ -74,7 +74,7 @@ jobs:
         run: |
           sudo podman build -f tests/boot/Containerfile.broken --build-arg BASE="${LOCAL}" -t localhost:5000/kiezel:broken .
           sudo podman run -d --name registry -p 5000:5000 \
-            docker.io/library/registry:3@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
+            docker.io/library/registry:3@sha256:52b489ad8e6f40d1a676702e3ce398ec796ce38f08fbb786e1f324baa12d84b8
           sudo podman push --tls-verify=false localhost:5000/kiezel:broken
 
       - name: Boot test (Secure Boot, TPM2, AVC, greenboot, signature policy, rollback)

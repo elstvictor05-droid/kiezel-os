@@ -6,12 +6,17 @@
 #
 # Usage (needs root, as bootc-image-builder does):
 #   sudo tests/boot/make-test-disk.sh <local-image> <ssh-pubkey-file> <outdir>
+#
+# The disk's origin is the image reference it was built from. So the local image is tagged as
+# the production reference first: the booted system then tracks ghcr.io/.../kiezel:stable,
+# exactly like an installed machine.
 set -euo pipefail
 
-IMAGE="$1" PUBKEY="$2" OUT="$3"
-TARGET_REF="${TARGET_REF:-ghcr.io/elstvictor05-droid/kiezel:stable}"
+SRC="$1" PUBKEY="$2" OUT="$3"
+IMAGE="${TARGET_REF:-ghcr.io/elstvictor05-droid/kiezel:stable}"
+podman tag "${SRC}" "${IMAGE}"
 # Pinned by digest; bumped by Renovate like every other dependency.
-BIB="quay.io/centos-bootc/bootc-image-builder:latest@sha256:669989d6ed08acd5acee63eab35084d0057e785cd17fa79982a60a6ba7f72d85"
+BIB="quay.io/centos-bootc/bootc-image-builder:latest@sha256:a0ee98db5bfb8337e45efb92f0c5d1a19179c85ce80a3360abc628fd1a17cc5c"
 
 mkdir -p "${OUT}"
 cat > "${OUT}/config.toml" <<EOF
@@ -33,8 +38,7 @@ podman run --rm --privileged --pull=newer \
     -v "${OUT}/config.toml":/config.toml:ro \
     -v /var/lib/containers/storage:/var/lib/containers/storage \
     "${BIB}" \
-    --type qcow2 --rootfs xfs --use-librepo=True \
-    --target-imgref "${TARGET_REF}" \
+    --type qcow2 --rootfs xfs \
     "${IMAGE}"
 
 mv "${OUT}/qcow2/disk.qcow2" "${OUT}/disk.qcow2"
