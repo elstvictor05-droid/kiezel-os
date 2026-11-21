@@ -33,7 +33,7 @@
             ],
             "": [
                 {
-                    "type": "insecureAcceptAnything"
+                    "type": "reject"
                 }
             ]
         },
