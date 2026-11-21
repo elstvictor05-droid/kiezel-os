@@ -2,7 +2,13 @@
 
 **A secure, simple Linux desktop for people who are not IT people, built entirely as code.**
 
-> **Status: Phase 0 (design).** Nothing is installable yet. See the [roadmap](docs/roadmap.md).
+> **Status: tech preview (v0.1 in preparation).** Kiezel installs, updates and rolls back
+> automatically, but the **Simple profile for older users is not there yet** (Phase 3). Until it
+> is, every release is labelled *tech preview*. See the [roadmap](docs/roadmap.md).
+
+[![build](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/build.yml)
+[![installer](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/iso.yml/badge.svg?branch=main)](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/iso.yml)
+[![validate](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/validate.yml)
 
 Kiezel (Dutch for *pebble*: small, smooth and hard to break) is an immutable desktop OS based on
 Fedora Atomic with KDE Plasma, delivered as a signed [bootc](https://bootc-dev.github.io/)
@@ -45,10 +51,13 @@ All major choices are recorded as [Architecture Decision Records](docs/adr/):
 | [0002](docs/adr/0002-config-format.md) | Own `config.yaml` with JSON Schema validation |
 | [0003](docs/adr/0003-image-signing-and-key-rotation.md) | cosign key plus offline backup key; rotation and leak plan |
 | [0004](docs/adr/0004-trust-policy-and-update-channel.md) | Replace Universal Blue's trust policy and update services |
-| [0005](docs/adr/0005-iso-and-installer.md) | Network-install ISO via `mkksiso`, LUKS2 via kickstart *(proposed)* |
+| [0005](docs/adr/0005-iso-and-installer.md) | Network-install ISO via `mkksiso`, LUKS2 via kickstart |
 | [0006](docs/adr/0006-project-name.md) | Name: Kiezel |
 | [0007](docs/adr/0007-first-run-wizard.md) | KDE Plasma Setup plus Welcome Center pages instead of a custom wizard |
-| [0008](docs/adr/0008-update-rollback-greenboot.md) | Automatic rollback with greenboot-rs *(proposed, spike first)* |
+| [0008](docs/adr/0008-update-rollback-greenboot.md) | Automatic rollback with greenboot-rs, no rollback loop |
+| [0009](docs/adr/0009-tpm2-enrollment.md) | TPM2 auto-unlock via one-time admin prompt, PCR 7 |
+| [0010](docs/adr/0010-avc-allowlist.md) | Known upstream AVC denials: exact-tuple allowlist, policy unchanged |
+| [0011](docs/adr/0011-firefox-rpm-or-flatpak.md) | Firefox RPM or Flatpak *(proposed)* |
 
 ## License
 

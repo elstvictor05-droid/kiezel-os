@@ -35,20 +35,24 @@ our image as the origin and (2) that origin requiring a signature.
      `keyPaths: [kiezel.pub, kiezel-backup.pub]` and `signedIdentity: matchRepository`.
    - Universal Blue keys and scopes **removed**. A Kiezel device should not switch to another
      image line.
-   - Catch-all for `docker`: `insecureAcceptAnything` during Phase 1 only. **Owner direction
-     for Phase 2:** the catch-all becomes `reject` in the Simple and Standard profiles. It is
-     opened only in Advanced, by an admin running a `ujust` recipe, so that podman and
-     distrobox can pull from docker.io and other registries. The exact mechanism (a
-     system-wide policy switch, or a per-user `~/.config/containers/policy.json`) will be
-     presented for approval in Phase 2.
+   - Catch-all for `docker`: **`reject`** (owner decision, Phase 2). In the Simple and Standard
+     profiles no image from another registry can be pulled; **podman, distrobox and toolbox
+     therefore do not work in Standard**. **Flatpak is not affected** (it does not use this
+     file). In Advanced, `ujust kiezel-containers-open` writes a **per-user**
+     `~/.config/containers/policy.json` with an open catch-all. The system policy (which bootc
+     uses) stays untouched, so key rotations keep applying. Details and tests are in
+     `docs/hardening.md` §2.
    - `/etc/containers/registries.d/kiezel.yaml`: `use-sigstore-attachments: true` for our scope.
-2. **Signed origin.** The installer deploys with signature enforcement (Anaconda without
-   `--no-signature-verification`, or `bootc switch --enforce-container-sigpolicy`), so the
-   origin is `ostree-image-signed:docker://ghcr.io/elstvictor05-droid/kiezel:stable`.
-3. **CI test** (Phase 1 boot test) asserts that:
-   - `bootc status` shows our image as the origin, with signature verification.
-   - `policy.json` contains no `ublue-os` scope.
-   - Pulling an **unsigned** image from our repository is rejected.
+2. **Enforcement by policy, not by origin type** (corrected after testing, 2026-11-21). bootc and
+   Anaconda record the origin as a plain (formally "unverified") registry reference. In practice
+   every pull consults `/etc/containers/policy.json`, whose Kiezel scope requires the
+   signature. That is proven, not assumed:
+   - the installer refuses an unsigned image;
+   - an installed system refuses `bootc switch` to an unsigned Kiezel image;
+   - the VM rejects a wrong-key image (tests/iso/post-install-check.sh, tests/boot/boot-test.sh).
+3. **CI tests** assert that the policy contains no `ublue-os` scope, that the catch-all is
+   `reject`, and that unsigned and wrong-key images are refused, on the host (device-style
+   skopeo) and in the VM.
 4. **Update services:** keep `rpm-ostreed-automatic` in `stage` mode, which downloads in the
    background, applies on the next reboot and skips metered connections. That matches the
    requirement that the user only sees "restart to update". Kiezel adds its own notification
