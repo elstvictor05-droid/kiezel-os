@@ -79,6 +79,8 @@ jobs:
           # One name for the test registry that resolves on the runner AND (as 10.0.2.2) in the VM,
           # so signatures made here carry the same image identity the VM verifies.
           echo '127.0.0.1 kiezel-registry.test' | sudo tee -a /etc/hosts
+          # A "local" name the VM must resolve through the router's DNS (QEMU forwards to the host).
+          echo '10.0.2.2 nas.home.arpa' | sudo tee -a /etc/hosts
           sudo podman run -d --name registry -p 5000:5000 \
             docker.io/library/registry:3@sha256:52b489ad8e6f40d1a676702e3ce398ec796ce38f08fbb786e1f324baa12d84b8
           sudo podman tag "${LOCAL}" localhost:5000/kiezel:good

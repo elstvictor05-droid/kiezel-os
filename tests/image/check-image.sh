@@ -71,8 +71,13 @@ check "firewalld default zone is kiezel" grep -qx 'DefaultZone=kiezel' /etc/fire
 check "kiezel zone opens no ports, only dhcpv6-client" \
     bash -c '! grep -q "<port" /usr/lib/firewalld/zones/kiezel.xml && [ "$(grep -c "<service" /usr/lib/firewalld/zones/kiezel.xml)" = 1 ]'
 check "firewalld enabled" systemctl is-enabled firewalld.service
-check "DNS-over-TLS opportunistic by default" \
-    grep -qx 'DNSOverTLS=opportunistic' /usr/lib/systemd/resolved.conf.d/50-kiezel-dns-over-tls.conf
+dns=/usr/lib/systemd/resolved.conf.d/50-kiezel-dns-over-tls.conf
+check "DNS: Quad9 primary with opportunistic DNS-over-TLS (ADR-0012)" \
+    bash -c "grep -q '^DNS=9.9.9.9#dns.quad9.net' ${dns} && grep -qx 'DNSOverTLS=opportunistic' ${dns}"
+check "DNS: fallback routing via NetworkManager dispatcher" test -x /usr/lib/NetworkManager/dispatcher.d/60-kiezel-dns-route
+check "DNS: fallback re-check timer enabled" systemctl is-enabled kiezel-dns-route.timer
+check "printers: mDNS only in the kiezel-home zone, never in the default zone" \
+    bash -c 'grep -q "service name=\"mdns\"" /usr/lib/firewalld/zones/kiezel-home.xml && ! grep -q mdns /usr/lib/firewalld/zones/kiezel.xml'
 check "fwupd metadata refresh enabled" systemctl is-enabled fwupd-refresh.timer
 check "USBGuard installed but disabled" bash -c 'rpm -q usbguard && ! systemctl is-enabled usbguard.service'
 fx=/usr/lib64/firefox/distribution/policies.json
