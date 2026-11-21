@@ -101,3 +101,52 @@ scoped to our repository. Still, act immediately:
 - The owner must generate and safely store the backup key. That is a manual step in Phase 1.
 - Revisit when containers/image supports Fulcio URI identities: keyless signing for CI plus the
   offline backup key would then remove the long-lived CI secret.
+
+## Signature format and verification (incident build #11, 2026-11-21)
+
+### What happened
+
+`sigstore/cosign-installer` installed **cosign v3.1.4**, which by default writes the new Sigstore
+**bundle** format. In GHCR it is stored as a referrers-style tag `sha256-<digest>`, with
+`artifactType: application/vnd.dev.sigstore.bundle.v0.3+json`. Devices verify with
+containers/image (bootc, podman, skopeo, Anaconda), and **containers/image only reads the classic
+simple-signing signature under the tag `sha256-<digest>.sig`**.
+
+- Result: our signed `:stable` and canary were treated exactly like unsigned images ("A signature
+  was required, but no signature exists"). No device could have installed or updated.
+- The release job's `cosign verify` still passed, because cosign understands its own bundle.
+- The boot test only noticed once the real canaries existed (build #11 on main). On PRs the check
+  had been **skipped**, which hid the problem.
+
+### Decisions
+
+1. **"cosign verify" is not proof that devices accept the image.** The only check that decides
+   promotion is **device-style verification**: `tests/sign/device-verify.sh`, which runs skopeo
+   with Kiezel's own `policy.json`, `registries.d` and public keys, the same code path as a
+   device. `cosign verify` stays only as a secondary check.
+2. **One signing command:** `ci/sign.sh` calls `cosign sign --new-bundle-format=false
+   --use-signing-config=false`. The release job and every PR's boot test use this same script.
+   The PR fixtures differ only in using a throwaway key and not uploading to Rekor; the format
+   is identical.
+3. **cosign is pinned** (`cosign-release: v3.1.4`). Renovate may bump it, but never
+   auto-merges, and the bump PR must pass the signature-path tests.
+4. **The format is proven in the registry, not trusted from flags.**
+   `tests/sign/check-format.sh` requires the tag `sha256-<digest>.sig` with a
+   `simplesigning` layer. It runs on the PR fixtures and on the real release digest before
+   promotion. Note: cosign 3.1.4 already prints that these flags are *deprecated*. When a cosign
+   release drops them, this check makes the Renovate PR fail instead of silently shipping
+   unreadable signatures.
+5. **Negative tests:** an unsigned image *and* an image signed with a **different key** must be
+   rejected, both by the device-style check on the host and inside the VM.
+6. **Promotion only by digest:** `:stable` and the dated tag are written from `IMAGE@DIGEST` (the
+   verified digest) and read back. If a tag does not resolve to exactly that digest, the job
+   fails. A failing device-style check means no promotion.
+7. **The signature path is never skipped on main.** The fixtures are created in every run, in a
+   local registry, independent of GHCR. A missing fixture is a FAIL. Only fork PRs (no access to
+   this repository's registry) may SKIP, through an explicit `--allow-skip`.
+
+### Revisit
+
+When containers/image supports the Sigstore bundle format (containers-libs issue "Support
+Sigstore bundle format"), move to bundles. That same day, add a device-style test for the bundle
+format before changing `ci/sign.sh`.
