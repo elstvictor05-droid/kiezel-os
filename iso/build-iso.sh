@@ -77,9 +77,15 @@ tests/iso/check-kickstart.sh "${KS}"
 # mkksiso normally rebuilds the EFI boot image with a loop mount (needs root). Instead we skip
 # that step and patch the grub.cfg inside efiboot.img with mtools, which edits FAT images
 # without mounting. The volume label is kept, so Fedora's boot search still finds the media.
-name="kiezel-netinstall$([[ ${TEST} -eq 1 ]] && echo -ci-test).iso"
-cmdline=""
-[[ ${TEST} -eq 1 ]] && cmdline="--cmdline 'console=ttyS0 inst.text'"
+# Explicit if/else: "x=$([[ cond ]] && echo y)" returns the test's status, and under set -e a
+# false condition silently ends the script (that broke the production build, TEST=0).
+if [[ ${TEST} -eq 1 ]]; then
+    name="kiezel-netinstall-ci-test.iso"
+    cmdline="--cmdline 'console=ttyS0 inst.text'"
+else
+    name="kiezel-netinstall.iso"
+    cmdline=""
+fi
 rm -f "${OUT}/${name}"
 podman run --rm --security-opt label=disable \
     -v "${CACHE}:/in:ro" -v "$(realpath "${OUT}"):/out" \
