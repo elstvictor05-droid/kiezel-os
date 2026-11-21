@@ -111,6 +111,13 @@ if [[ "${avc}" == "0" ]]; then pass "0 SELinux AVC denials since boot"
 else
     fail "0 SELinux AVC denials since boot" "${avc} denials"
     ssh_vm "journalctl -b --no-pager -o cat | grep 'avc:  denied' | head -20" >> "${REPORT}" 2>&1
+    # Context to find the caller: which processes produced the denials, and tuned's own log.
+    {
+        echo "--- AVC context (ausearch -i) ---"
+        ssh_vm "ausearch -m AVC -ts boot -i 2>/dev/null | grep -E 'type=(SYSCALL|PROCTITLE)' | head -20"
+        echo "--- tuned journal ---"
+        ssh_vm "journalctl -b --no-pager -o short-monotonic -u tuned -u tuned-ppd | tail -25"
+    } >> "${REPORT}" 2>&1
 fi
 
 gb="$(ssh_vm 'systemctl show -p Result --value greenboot-healthcheck.service; systemctl is-active boot-complete.target' 2>&1 | xargs)"
