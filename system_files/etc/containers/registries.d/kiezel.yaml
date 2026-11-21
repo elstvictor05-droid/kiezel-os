@@ -1,0 +1,4 @@
+# Fetch cosign/sigstore signatures for Kiezel images from the registry (stored as OCI attachments).
+docker:
+  ghcr.io/elstvictor05-droid/kiezel:
+    use-sigstore-attachments: true
