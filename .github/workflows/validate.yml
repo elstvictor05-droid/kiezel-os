@@ -1,0 +1,31 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  config-schema:
+    name: config.yaml matches schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate config.yaml
+        run: pipx run --spec check-jsonschema==0.39.0 check-jsonschema --schemafile schema/config.schema.json config.yaml
+      - name: Schema itself is valid
+        run: pipx run --spec check-jsonschema==0.39.0 check-jsonschema --check-metaschema schema/config.schema.json
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Lint shell scripts
+        run: |
+          mapfile -t files < <(git ls-files '*.sh' 'build/*' 'tests/*' | grep -vE '\.md$' || true)
+          if [ "${#files[@]}" -eq 0 ]; then echo "no shell scripts yet"; exit 0; fi
+          shellcheck --severity=warning "${files[@]}"

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/elstvictor05-droid/kiezel-os/schema/config.schema.json",
+  "title": "Kiezel variant configuration",
+  "description": "Schema for config.yaml. Keep it small: every field must be a real choice a variant builder makes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "id", "branding", "image", "locale", "profile", "apps", "security"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "description": "Human-readable OS name shown to users."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,30}$",
+      "description": "Machine name used in file names and the image name."
+    },
+    "branding": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Folder under branding/ that holds logo, wallpaper and colours."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry", "name"],
+      "properties": {
+        "registry": {
+          "type": "string",
+          "pattern": "^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$",
+          "description": "Registry and namespace, e.g. ghcr.io/<user>."
+        },
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" }
+      }
+    },
+    "locale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default", "offered", "keyboard"],
+      "properties": {
+        "default": { "$ref": "#/$defs/locale" },
+        "offered": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/locale" }
+        },
+        "keyboard": { "type": "string", "pattern": "^[a-z]{2,3}(-[a-z0-9]+)?$" }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default"],
+      "properties": {
+        "default": { "enum": ["simple", "standard", "advanced"] }
+      }
+    },
+    "apps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["simple", "standard", "advanced"],
+      "properties": {
+        "simple": { "$ref": "#/$defs/appList" },
+        "standard": { "$ref": "#/$defs/appList" },
+        "advanced": { "$ref": "#/$defs/appList" }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["usbguard"],
+      "properties": {
+        "usbguard": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "locale": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}_[A-Z]{2}\\.UTF-8$"
+    },
+    "appList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "description": "Flathub application ID (reverse-DNS).",
+        "pattern": "^[A-Za-z][A-Za-z0-9_-]*(\\.[A-Za-z0-9_-]+){2,}$"
+      }
+    }
+  }
+}

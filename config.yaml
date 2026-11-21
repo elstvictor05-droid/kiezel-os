@@ -1,0 +1,42 @@
+# Kiezel variant configuration.
+#
+# This is the only file you need to edit to build your own variant.
+# It is validated against schema/config.schema.json in CI, so typos fail early.
+# Keep it small: anything that is not a real choice belongs in the build scripts.
+
+# Branding. Assets (logo, wallpaper) live in branding/<id>/.
+name: Kiezel
+id: kiezel                       # lowercase; used for file names and the image name
+branding: kiezel                 # folder under branding/
+
+# Where the image is published and which signing key the system trusts.
+image:
+  registry: ghcr.io/elstvictor05-droid
+  name: kiezel
+
+# Language preselected in the installer and first-run wizard.
+# Code, docs and the fallback system language stay English (en_US).
+locale:
+  default: nl_BE.UTF-8
+  offered: [nl_BE.UTF-8, en_US.UTF-8, fr_BE.UTF-8, de_DE.UTF-8]
+  keyboard: be
+
+# Profile a new daily user starts with: simple | standard | advanced
+profile:
+  default: simple
+
+# Curated Flatpak apps from Flathub, per profile. Each profile includes the ones above it.
+apps:
+  simple:
+    - org.mozilla.firefox
+    - org.mozilla.Thunderbird
+    - org.kde.gwenview
+    - org.kde.okular
+  standard:
+    - org.libreoffice.LibreOffice
+    - org.kde.kcalc
+  advanced: []
+
+# Optional security features (off by default; see docs/hardening.md).
+security:
+  usbguard: false
