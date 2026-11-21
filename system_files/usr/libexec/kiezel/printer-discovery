@@ -1,12 +1,22 @@
 #!/usr/bin/bash
-# Allow or block automatic discovery of network printers (mDNS, UDP 5353) in the Kiezel firewall
-# zone. Off by default ("no open incoming ports"). Run as root.
+# Find network printers automatically (mDNS, UDP 5353) on THIS home network only. Run as root.
+#   on   put the current network connection in firewall zone "kiezel-home" (mDNS allowed)
+#   off  put it back in the default zone "kiezel" (no incoming ports)
+# Other networks (public Wi-Fi) keep using the default zone, so mDNS stays closed there.
+# Risk if a PUBLIC network is marked as home: other people on it can see this computer's name
+# and services, and reach the mDNS responder (docs/hardening.md §3).
 set -euo pipefail
+
+con="${2:-$(nmcli -t -f NAME,DEVICE,TYPE connection show --active | awk -F: '$3 ~ /ethernet|wireless/ {print $1; exit}')}"
+[[ -n "${con}" ]] || { echo "no active Ethernet/Wi-Fi connection" >&2; exit 1; }
+
 case "${1:-}" in
-    on)  firewall-cmd --permanent --zone=kiezel --add-service=mdns >/dev/null ;;
-    off) firewall-cmd --permanent --zone=kiezel --remove-service=mdns >/dev/null ;;
-    status) firewall-cmd --zone=kiezel --query-service=mdns && exit 0 || exit 0 ;;
-    *) echo "usage: $0 on|off|status" >&2; exit 2 ;;
+    on)  zone="kiezel-home" ;;
+    off) zone="" ;;
+    status) echo "${con}: zone=$(nmcli -g connection.zone connection show "${con}")"; exit 0 ;;
+    *) echo "usage: $0 on|off|status [connection]" >&2; exit 2 ;;
 esac
-firewall-cmd --reload >/dev/null
-firewall-cmd --zone=kiezel --list-services
+nmcli connection modify "${con}" connection.zone "${zone}"
+dev="$(nmcli -g GENERAL.DEVICES connection show "${con}" | head -1)"
+firewall-cmd --zone="${zone:-kiezel}" --change-interface="${dev}" >/dev/null
+echo "${con} (${dev}): zone ${zone:-kiezel}"

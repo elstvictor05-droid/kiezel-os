@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kiezel home zone: like "kiezel", plus mDNS (UDP 5353) so network printers at home are found
+     automatically. Only the user's own home network is ever put in this zone (Plasma Welcome
+     page "Do you have a network printer at home?", Phase 3). Public Wi-Fi stays in "kiezel". -->
+<zone target="%%REJECT%%">
+  <short>Kiezel (home)</short>
+  <description>Home network: incoming connections are rejected, except DHCPv6 and mDNS for finding network printers.</description>
+  <service name="dhcpv6-client"/>
+  <service name="mdns"/>
+</zone>
