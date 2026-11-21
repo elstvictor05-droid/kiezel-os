@@ -190,7 +190,8 @@ done
 [[ -z "${missing}" ]] && pass "hardening boot parameters active" || fail "hardening boot parameters active" "missing:${missing}"
 
 # Firewall: Kiezel zone active, and a real listener inside the VM is NOT reachable from outside.
-zone="$(ssh_vm 'firewall-cmd --get-default-zone; firewall-cmd --get-active-zones | head -1' 2>&1 | xargs)"
+# --get-active-zones prints e.g. "kiezel (default)" followed by "  interfaces: ...": take the name only.
+zone="$(ssh_vm "firewall-cmd --get-default-zone; firewall-cmd --get-active-zones | head -1 | awk '{print \$1}'" 2>&1 | xargs)"
 [[ "${zone}" == "kiezel kiezel" ]] && pass "firewall: Kiezel zone is default and active" || fail "firewall: Kiezel zone default and active" "${zone}"
 ssh_vm 'systemd-run --unit=kiezel-probe --property=Type=exec python3 -m http.server 8080 --bind 0.0.0.0' >/dev/null 2>&1
 sleep 3
