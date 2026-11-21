@@ -1,0 +1,31 @@
+#!/usr/bin/bash
+# Advanced profile only (ADR-0004): let THIS USER's podman/distrobox/toolbox pull from any
+# registry, by writing a per-user ~/.config/containers/policy.json.
+#
+# Why per-user and not editing /etc/containers/policy.json:
+#  - the system policy (used by bootc for OS updates) stays exactly as shipped, so key rotations
+#    in future images keep applying (an edited /etc file would stop receiving them);
+#  - only the user who asked gets the open policy. OS updates are never affected.
+# Flatpak does not use this file at all and keeps working in every profile.
+set -euo pipefail
+
+user_policy="${XDG_CONFIG_HOME:-${HOME}/.config}/containers/policy.json"
+case "${1:-}" in
+    open)
+        mkdir -p "$(dirname "${user_policy}")"
+        jq '.transports.docker[""] = [{"type": "insecureAcceptAnything"}]
+            | .transports["docker-daemon"][""] = [{"type": "insecureAcceptAnything"}]' \
+            /etc/containers/policy.json > "${user_policy}.tmp"
+        mv "${user_policy}.tmp" "${user_policy}"
+        echo "Container images from any registry are now allowed for user $(id -un)."
+        echo "Kiezel's own images still require Kiezel's signature. Undo: ujust kiezel-containers-close"
+        ;;
+    close)
+        rm -f "${user_policy}"
+        echo "Back to the Kiezel default: only signed Kiezel images (system policy)."
+        ;;
+    status)
+        if [[ -f "${user_policy}" ]]; then echo "open (per-user policy ${user_policy})"; else echo "closed (system policy)"; fi
+        ;;
+    *) echo "usage: $0 open|close|status" >&2; exit 2 ;;
+esac
