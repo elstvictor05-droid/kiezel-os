@@ -3,8 +3,19 @@
 **A secure, simple Linux desktop for people who are not IT people, built entirely as code.**
 
 > **Status: tech preview (v0.1 in preparation).** Kiezel installs, updates and rolls back
-> automatically, but the **Simple profile for older users is not there yet** (Phase 3). Until it
-> is, every release is labelled *tech preview*. See the [roadmap](docs/roadmap.md).
+> automatically, with a closed firewall, signed images and an encrypted disk.
+>
+> **Not there yet (Phase 3):** the **Simple profile** for older users (large tiles, large text)
+> and the **welcome wizard** (text size, contrast, printer and privacy questions). Until then
+> every release is labelled *tech preview*. See the [roadmap](docs/roadmap.md).
+>
+> **DNS goes to Quad9 by default.** Kiezel sends the names you look up (such as `example.com`)
+> to [Quad9](https://quad9.net), encrypted when the network allows it, instead of to your
+> internet provider. Local names (your router, a NAS) still use your router, and Kiezel falls
+> back to your router's DNS by itself when Quad9 cannot be reached (hotel or train Wi-Fi).
+> Quad9 then sees which names you look up instead of your provider. To use only your router's
+> DNS, as without Kiezel, run `ujust kiezel-dns-router` (and `ujust kiezel-dns-quad9` to switch
+> back). Details: [ADR-0012](docs/adr/0012-dns-quad9-with-fallback.md).
 
 [![build](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/build.yml)
 [![installer](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/iso.yml/badge.svg?branch=main)](https://github.com/elstvictor05-droid/kiezel-os/actions/workflows/iso.yml)

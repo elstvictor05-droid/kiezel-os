@@ -55,11 +55,17 @@ ADR-0001 to ADR-0008, repository skeleton, config schema with CI validation, Ren
   **hard requirement**. Only then is the ISO built, signed (`cosign sign-blob` bundle) and
   published as a GitHub **pre-release** labelled *tech preview*, with `SHA256SUMS` and
   `cosign.pub`. The image is tagged `:vX.Y.Z` by digest, after device-style verification.
-- **v0.1 release blockers:**
-  - no false rollback on power-off with a staged update (greenboot-rs #219), proven by the
-    boot test;
-  - no rollback loop (the failed digest is never staged again);
-  - **at least one install and update test on real, old hardware**, not only in a VM.
+- **v0.1 release blockers (the `v0.1.0` tag is only pushed after all of these):**
+  - no false rollback on power-off with a staged update (greenboot-rs #219): boot test ✔;
+  - no rollback loop (the failed digest is never staged again): boot test ✔;
+  - **captive portal, simulated** (dnsmasq DNS hijack plus HTTP redirect, then login): DNS
+    falls back, NetworkManager detects the portal, and Kiezel returns to Quad9 after login.
+    `tests/portal/portal-test.sh` in CI;
+  - **real old hardware:** install, update and rollback, **hard power loss** during an update,
+    GPU, and suspend/resume. Results go in `docs/testing.md`;
+  - offline backup signing key in the trust policy.
+- **After v0.1 (verification, not a blocker):** a real hotel or train Wi-Fi with a captive
+  portal.
 
 ### Phase 3 — accessibility, profiles, first-run
 - Plasma Setup plus Welcome Center extra pages (ADR-0007), nl_BE preselected.
