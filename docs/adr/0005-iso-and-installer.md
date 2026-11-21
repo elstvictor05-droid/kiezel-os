@@ -56,11 +56,32 @@ Verification steps are in the README.
 
 ## To prove in the Phase 1 thin slice (spike)
 
-- [ ] `mkksiso` ISO boots in QEMU with OVMF Secure Boot and installs to an encrypted disk.
-- [ ] The install-time pull **fails** for an unsigned or wrongly signed image, which shows that
-      `%pre` really replaces the policy.
-- [ ] The installed origin uses signature enforcement (`bootc status`).
-- [ ] TPM2 auto-unlock works with `swtpm` and falls back to the passphrase without TPM.
+- [x] `mkksiso` ISO boots in QEMU with OVMF Secure Boot and installs `:stable` to an
+      encrypted disk (about 8 min; `tests/iso/install-test.sh`).
+- [x] The install-time pull **fails** for an unsigned bootable image ("A signature was required,
+      but no signature exists"), which shows that `%pre` really replaces the installer policy.
+- [x] The installed system enforces signatures. bootc records the origin as an "unverified"
+      registry reference, but `policy.json` (`sigstoreSigned` for our scope) is consulted for
+      every pull, and `bootc switch` to an unsigned Kiezel image is refused
+      (`tests/iso/post-install-check.sh`).
+- [ ] TPM2 auto-unlock: Phase 4 (ADR-0009). Without enrollment, the passphrase is asked at every
+      boot (verified).
+
+### Bugs found by the installer test (2026-11-21)
+
+1. **No login screen after a text-mode install.** Anaconda sets `multi-user.target` when no
+   default target is set and the install runs in text mode. The greenboot health check caught
+   it ("display-manager.service is not active"). Fix: `xconfig --startxonboot`.
+2. **`/` in `/etc/fstab`.** Anaconda writes a root line, but bootc mounts `/` as composefs, so
+   `systemd-remount-fs` fails and the system boots "degraded". Fix: `%post` removes that one
+   line.
+3. **Red hook on a fresh install.** Without a previous deployment, the greenboot red hook marked
+   the installed image as failed and queued the "update did not work" notice. Fix: it only acts
+   when a rollback target exists.
+
+### Production ISO size
+
+1.2 GB (Fedora 45 netinstall plus kickstart), under GitHub's 2 GiB asset limit.
 
 ## Owner conditions (2026-11-21)
 

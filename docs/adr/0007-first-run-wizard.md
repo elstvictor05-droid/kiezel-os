@@ -64,4 +64,24 @@ source and package findings. The on-screen run in a VM, with screenshots, is sti
 | Account type | The created user joins the groups from `/etc/xdg/plasmasetuprc` `[Accounts] UserGroups`. **An empty value falls back to `wheel` (admin).** The page also always shows the text "This user will be an administrator." | Set `UserGroups` to non-admin groups. The admin label must be fixed: either an upstream patch that makes it depend on `wheel`, or our own account page. **Open item for Phase 3.** |
 | Admin already created by the installer | Plasma Setup **hides the account step** when a regular user exists, unless `PLASMA_SETUP_USER_CREATION_OVERRIDE=1` is set. | Set that variable for the service, so that the installer creates the admin and Plasma Setup creates the daily user. |
 
-Next step (Phase 3): run it in the VM, take screenshots, and test Orca with the keyboard only.
+### On-screen run (2026-11-21, freshly installed system from the CI-test ISO)
+
+![Plasma Setup on Kiezel's first boot](../user-guide/images/plasma-setup-welcome.png)
+
+- Plasma Setup starts on first boot, in Dutch, and shows "Aangedreven door **Kiezel**" (from
+  our os-release).
+- **Orca works before the first login:** after Meta+Alt+S, `orca.service` and
+  `speech-dispatcher` start in the setup session (journal). There is still no visible button.
+- **Accessibility gap confirmed:** at 1280×800 the "Begin met opzetten" button and the text are
+  small, so the Kiezel module for text size must come first (Phase 3).
+- **Bug found: Plasma Setup overwrites the installer's region.** At start-up it maps `nl_BE`,
+  which has no separate translation, to the base language `nl`. It then calls
+  `SetLocale(QLocale("nl").name())`, which gives **`nl_NL`**, and so replaces nl_BE with
+  Dutch-Netherlands formats for the whole system. This affects every regional locale without
+  its own translation (fr_BE, de_AT, ...). Source:
+  `modules/languageutil/languageutil.cpp`, `overrideInitialLanguageIfNeeded()` followed by
+  `applyLanguageAsSystemDefault()`.
+  **Kiezel workaround:** `kiezel-locale-capture.service` saves the installer's LANG before
+  Plasma Setup runs. `kiezel-locale-restore.path` restores the *region* after setup, but only
+  when the language is unchanged (nl→nl). A different language chosen in Plasma Setup is kept.
+  To report upstream (bugs.kde.org, product plasma-setup).
