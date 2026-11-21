@@ -1,0 +1,12 @@
+#!/usr/bin/bash
+# Allow or block automatic discovery of network printers (mDNS, UDP 5353) in the Kiezel firewall
+# zone. Off by default ("no open incoming ports"). Run as root.
+set -euo pipefail
+case "${1:-}" in
+    on)  firewall-cmd --permanent --zone=kiezel --add-service=mdns >/dev/null ;;
+    off) firewall-cmd --permanent --zone=kiezel --remove-service=mdns >/dev/null ;;
+    status) firewall-cmd --zone=kiezel --query-service=mdns && exit 0 || exit 0 ;;
+    *) echo "usage: $0 on|off|status" >&2; exit 2 ;;
+esac
+firewall-cmd --reload >/dev/null
+firewall-cmd --zone=kiezel --list-services

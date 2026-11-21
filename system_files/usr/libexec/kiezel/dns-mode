@@ -1,0 +1,24 @@
+#!/usr/bin/bash
+# DNS-over-TLS mode (docs/hardening.md). Run as root.
+#   opportunistic  default: try TLS with the network's DNS server, fall back to plain DNS
+#   strict <prov>  Advanced: only encrypted DNS to a named provider; no fallback
+#                  (DNS stops working on networks that block port 853, by design)
+set -euo pipefail
+
+conf=/etc/systemd/resolved.conf.d/90-kiezel-dns-strict.conf
+case "${1:-}" in
+    strict)
+        case "${2:-quad9}" in
+            quad9)      servers="9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net 2620:fe::fe#dns.quad9.net 2620:fe::9#dns.quad9.net" ;;
+            cloudflare) servers="1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com 2606:4700:4700::1111#cloudflare-dns.com" ;;
+            *) echo "unknown provider '${2}' (quad9|cloudflare)" >&2; exit 2 ;;
+        esac
+        mkdir -p "$(dirname "${conf}")"
+        printf '# Written by ujust kiezel-dns-strict\n[Resolve]\nDNSOverTLS=yes\nDNS=%s\nDomains=~.\n' "${servers}" > "${conf}"
+        ;;
+    opportunistic) rm -f "${conf}" ;;
+    status) resolvectl status | grep -E 'DNSOverTLS|DNS Servers|Current DNS' | head -5; exit 0 ;;
+    *) echo "usage: $0 strict [quad9|cloudflare] | opportunistic | status" >&2; exit 2 ;;
+esac
+systemctl restart systemd-resolved
+resolvectl status | grep -E 'DNSOverTLS|Current DNS' | head -3

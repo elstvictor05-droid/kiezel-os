@@ -6,6 +6,7 @@ FROM scratch AS ctx
 COPY config.yaml /config.yaml
 COPY build /build
 COPY system_files /system_files
+COPY firefox /firefox
 
 FROM ghcr.io/ublue-os/kinoite-main:45@sha256:3740c6d6c1f93bf29f2cb705da46a693ed5dda49c1de7ea9966867db974c7ed1
 

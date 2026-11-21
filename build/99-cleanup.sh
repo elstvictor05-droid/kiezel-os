@@ -3,4 +3,4 @@
 # on a bootc system /var belongs to the machine, not the image (bootc container lint checks this).
 set -euo pipefail
 
-rm -rf /run/dnf /var/lib/dnf/repos
+rm -rf /run/dnf /run/selinux-policy /var/lib/dnf/repos

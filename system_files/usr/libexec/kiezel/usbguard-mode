@@ -1,0 +1,17 @@
+#!/usr/bin/bash
+# Optional USBGuard (off by default). Run as root.
+#   enable   allow exactly the USB devices plugged in NOW, block every new device
+#   disable  stop USBGuard (all USB devices work again)
+# Risk (docs/hardening.md): a new keyboard, mouse or USB stick is blocked until an admin allows it.
+set -euo pipefail
+case "${1:-}" in
+    enable)
+        umask 077
+        usbguard generate-policy > /etc/usbguard/rules.conf
+        systemctl enable --now usbguard.service
+        echo "USBGuard on. Allowed now: $(grep -c '^allow' /etc/usbguard/rules.conf) device(s)."
+        ;;
+    disable) systemctl disable --now usbguard.service; echo "USBGuard off." ;;
+    status) systemctl is-active usbguard.service || true ;;
+    *) echo "usage: $0 enable|disable|status" >&2; exit 2 ;;
+esac
