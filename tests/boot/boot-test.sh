@@ -136,6 +136,16 @@ else
     skip "signature canaries" "not published yet; created by the first release run"
 fi
 
+# The update path itself: a plain 'bootc switch' (what the update timer effectively does) to an
+# UNSIGNED bootable image in our repository must be refused by the trust policy.
+if skopeo inspect --raw "docker://${KIEZEL_REF}:ci-unsigned-bootable" >/dev/null 2>&1; then
+    out="$(ssh_vm "bootc switch ${KIEZEL_REF}:ci-unsigned-bootable" 2>&1)"
+    if [[ $? -ne 0 ]] && grep -qi 'signature' <<<"${out}"; then pass "bootc refuses to switch to an UNSIGNED Kiezel image"
+    else fail "bootc refuses to switch to an UNSIGNED Kiezel image" "${out:0:300}"; ssh_vm "bootc switch ${KIEZEL_REF}:stable" >/dev/null 2>&1; fi
+else
+    skip "unsigned bootable image refused by bootc" "ci-unsigned-bootable not published yet (first main build)"
+fi
+
 # --- Rollback test (ADR-0008) -------------------------------------------------------
 if [[ -n "${ROLLBACK_IMAGE}" ]]; then
     log "== Rollback test with ${ROLLBACK_IMAGE}"
