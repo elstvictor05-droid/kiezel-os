@@ -1,0 +1,9 @@
+# Kiezel boot parameters (docs/hardening.md). Applied by bootc on install and on every update.
+# Deliberately NOT here: init_on_free (owner decision: too slow on old PCs), nosmt (halves CPU
+# power on old dual-cores), anything that disables GPU or Spectre defaults.
+kargs = [
+  "slab_nomerge",          # keep kernel object caches separate (harder heap exploitation)
+  "page_alloc.shuffle=1",  # randomise page allocator free lists (kernel has the code built in)
+  "vsyscall=none",         # remove the legacy fixed-address vsyscall page
+  "debugfs=off",           # no kernel debug filesystem (leaks kernel internals)
+]
