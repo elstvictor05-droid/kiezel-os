@@ -58,10 +58,10 @@ echo "== Kiezel install test (expect: ${EXPECT})"
 start=${SECONDS} outcome="timeout"
 while (( SECONDS - start < TIMEOUT )); do
     if ! kill -0 "${qpid}" 2>/dev/null; then outcome="poweroff"; break; fi
-    if strings "${SERIAL}" | grep -qiE 'signature (is )?required|no signature|signature.*(invalid|not valid|verification failed)|A signature was required'; then
+    if strings "${SERIAL}" 2>/dev/null | grep -qiE 'signature (is )?required|no signature|signature.*(invalid|not valid|verification failed)|A signature was required'; then
         outcome="signature-error"; break
     fi
-    if strings "${SERIAL}" | grep -qE 'Traceback|An unknown error has occured|Pane is dead|error occurred while installing the payload'; then
+    if strings "${SERIAL}" 2>/dev/null | grep -qE 'Traceback|An unknown error has occured|Pane is dead|error occurred while installing the payload'; then
         outcome="installer-error"; break
     fi
     sleep 10
