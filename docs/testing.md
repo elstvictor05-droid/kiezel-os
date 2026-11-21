@@ -70,3 +70,33 @@ virt-install --name kiezel --memory 4096 --vcpus 2 --cpu host-passthrough \
    ```
 5. **Without TPM:** remove the TPM device from the VM. The disk must then ask for the
    passphrase instead of unlocking by itself.
+
+## Real old hardware (v0.1 blocker)
+
+Run on at least one real, older PC (4–8 GB RAM, ideally without TPM2 and with an older GPU).
+Record the results in the table at the end; a v0.1.0 tag requires every row to be ✔ or an
+accepted, documented exception.
+
+**Preparation**
+- Note the hardware: CPU, RAM, GPU (`lspci | grep -i vga`), TPM present (`ls /dev/tpm*`),
+  firmware date, and whether Secure Boot is on in the firmware setup.
+- Write `kiezel-netinstall.iso` to a USB stick and verify `SHA256SUMS` and the cosign bundle
+  (docs/user-guide/installing.md).
+
+| # | Test | How | Expected |
+|---|---|---|---|
+| H1 | Install | Boot the USB stick (Secure Boot **on** if the firmware supports it), Wi-Fi if no cable, passphrase, admin account | Installs, reboots, asks for the disk passphrase, Plasma Setup appears in Dutch |
+| H2 | Boot health | As admin: `systemctl is-system-running`, `mokutil --sb-state`, `getenforce`, `journalctl -b -o cat \| grep -c 'avc:  denied'` | `running`, SecureBoot enabled (or documented firmware limitation), `Enforcing`, only known AVCs (see tests/boot/avc-allowlist.txt) |
+| H3 | GPU | Log in, move windows, play a YouTube video in Firefox for 2 min, check `glxinfo -B` (or `kinfo`) | Smooth desktop, video plays, a hardware renderer (not llvmpipe), unless documented |
+| H4 | Suspend/resume | Close the lid or use *Sleep*, wait 1 min, wake | Back to the lock screen; Wi-Fi reconnects; no lost windows |
+| H5 | Update | `rpm-ostree upgrade --trigger-automatic-update-policy` (or wait for the timer), then restart | New version booted (`bootc status`), greenboot healthy |
+| H6 | Rollback | `ujust`-free manual test: `bootc switch` to a test image whose login screen is masked (`ghcr.io/…/kiezel:ci-broken` if published, or a local one), restart | Within 3 failed boots back on the previous version; plain-language notice after login |
+| H7 | **Hard power loss during an update** | Start an update (`rpm-ostree upgrade`), and while it downloads **and** again right after "staged", pull the power cord (or hold the power button 10 s). Power on | Boots the old **or** the new version (never a broken system); no false rollback; `bootc status` is consistent |
+| H8 | Firewall and DNS | `firewall-cmd --get-active-zones`; `resolvectl status \| grep -E 'Current DNS\|DNSOverTLS'`; open a local router page by name | `kiezel`; Quad9; the router page works |
+| H9 | RAM at rest | After login, wait 5 min idle, `free -m` | Recorded (target < 1.5 GB is a Phase 3 goal; v0.1 only records it) |
+
+**Results**
+
+| # | Date | Hardware | Result | Notes |
+|---|---|---|---|---|
+| H1–H9 | | | | |
