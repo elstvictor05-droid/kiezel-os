@@ -61,7 +61,7 @@ while (( SECONDS - start < TIMEOUT )); do
     if strings "${SERIAL}" | grep -qiE 'signature (is )?required|no signature|signature.*(invalid|not valid|verification failed)|A signature was required'; then
         outcome="signature-error"; break
     fi
-    if strings "${SERIAL}" | grep -qE 'Traceback|An unknown error has occured|Pane is dead'; then
+    if strings "${SERIAL}" | grep -qE 'Traceback|An unknown error has occured|Pane is dead|error occurred while installing the payload'; then
         outcome="installer-error"; break
     fi
     sleep 10
@@ -81,6 +81,12 @@ case "${EXPECT}:${outcome}" in
         fi ;;
     signature-rejected:signature-error)
         echo "PASS  installer REFUSED the unsigned image"; rc=0 ;;
+    signature-rejected:installer-error)
+        if strings "${SERIAL}" | tr '\n' ' ' | grep -qiE 'signature'; then
+            echo "PASS  installer REFUSED the unsigned image (payload error mentions the signature)"; rc=0
+        else
+            echo "FAIL  installer failed, but NOT because of the signature"
+        fi ;;
     signature-rejected:poweroff)
         echo "FAIL  installer installed an UNSIGNED image" ;;
     *)

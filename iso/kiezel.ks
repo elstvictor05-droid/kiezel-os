@@ -58,6 +58,8 @@ docker:
     use-sigstore-attachments: true
 REG
 echo "Kiezel installer trust policy installed"
+# Also to the kernel log, so automated tests can see it on the serial console.
+echo "Kiezel installer trust policy installed" > /dev/kmsg || true
 %end
 
 %post --log=/root/kiezel-post.log
