@@ -70,14 +70,22 @@ Verification steps are in the README.
 ### Bugs found by the installer test (2026-11-21)
 
 1. **No login screen after a text-mode install.** Anaconda sets `multi-user.target` when no
-   default target is set and the install runs in text mode. The greenboot health check caught
-   it ("display-manager.service is not active"). Fix: `xconfig --startxonboot`.
+   default target is set and the install runs in text mode. This is documented Anaconda
+   behaviour, not an upstream bug. The greenboot health check caught it ("display-manager.service
+   is not active"). Fix: `xconfig --startxonboot`.
 2. **`/` in `/etc/fstab`.** Anaconda writes a root line, but bootc mounts `/` as composefs, so
-   `systemd-remount-fs` fails and the system boots "degraded". Fix: `%post` removes that one
-   line.
+   `systemd-remount-fs` fails and the system boots "degraded". It also happens on **vanilla
+   Fedora Kinoite 45**. Upstream fix: Anaconda PR #7393 (rhbz#2332319), in anaconda ≥ 46.6, **not
+   in the Fedora 45 branch**. Kiezel fix: `%post` removes that one line. No regression: the
+   `compress=zstd` option on that line was never applied on composefs, because the remount
+   always failed.
 3. **Red hook on a fresh install.** Without a previous deployment, the greenboot red hook marked
    the installed image as failed and queued the "update did not work" notice. Fix: it only acts
    when a rollback target exists.
+4. **Retracted (2026-11-21):** a suspected Anaconda bug ("locale written to the physical
+   sysroot instead of the deployment") was **wrong**. A reproduction on vanilla Kinoite 45 shows
+   the deployment has `LANG=nl_BE.UTF-8` at first boot. The `nl_NL` comes only from Plasma Setup
+   (ADR-0007). The `%post --nochroot` copy was removed again.
 
 ### Production ISO size
 
