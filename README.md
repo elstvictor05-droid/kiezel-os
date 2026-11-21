@@ -57,7 +57,8 @@ All major choices are recorded as [Architecture Decision Records](docs/adr/):
 | [0008](docs/adr/0008-update-rollback-greenboot.md) | Automatic rollback with greenboot-rs, no rollback loop |
 | [0009](docs/adr/0009-tpm2-enrollment.md) | TPM2 auto-unlock via one-time admin prompt, PCR 7 |
 | [0010](docs/adr/0010-avc-allowlist.md) | Known upstream AVC denials: exact-tuple allowlist, policy unchanged |
-| [0011](docs/adr/0011-firefox-rpm-or-flatpak.md) | Firefox RPM or Flatpak *(proposed)* |
+| [0011](docs/adr/0011-firefox-rpm-or-flatpak.md) | Firefox as Flatpak from Flathub (Phase 3) |
+| [0012](docs/adr/0012-dns-quad9-with-fallback.md) | DNS: Quad9 over TLS, automatic fallback to the router |
 
 ## License
 

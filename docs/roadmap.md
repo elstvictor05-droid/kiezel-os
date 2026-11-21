@@ -66,6 +66,9 @@ ADR-0001 to ADR-0008, repository skeleton, config schema with CI validation, Ren
 - Simple, Standard and Advanced profiles. Simple start screen with large tiles.
   Orca, magnifier, high contrast and text-to-speech each one click away.
 - "Get help" remote support: ADR with RustDesk (own relay) versus KDE options.
+- Welcome pages decided in Phase 2: "Do you have a network printer at home?" (mDNS in the home
+  zone only), the DNS privacy choice (Quad9 or router, ADR-0012), and Firefox and the curated
+  apps as Flatpak (ADR-0011).
 - Plain-language notifications for updates and rollback.
 - RAM measurement.
 - **Two real older testers**, each given a task list (e.g. "send an email with a photo",

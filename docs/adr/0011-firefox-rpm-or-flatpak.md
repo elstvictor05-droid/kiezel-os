@@ -1,6 +1,6 @@
 # ADR-0011: Firefox — RPM in the image, or Flatpak from Flathub
 
-- **Status:** Proposed (needs the owner's decision; it touches the "apps only from Flathub" rule)
+- **Status:** Accepted (owner decision 2026-11-21: Flatpak). Implemented with the curated app list in Phase 3
 - **Date:** 2026-11-21
 - **Phase:** 2
 
@@ -33,3 +33,17 @@ application for the target users. It also fulfils the requirement. Plan:
    uBlock Origin installed by policy. If the symlink approach does not work inside the sandbox,
    fall back to a oneshot unit that copies the policy file into `/var` at boot, and test that.
 3. Until then, the RPM with policies stays (tested).
+
+## Decision (2026-11-21)
+
+**Flatpak from Flathub.** The owner's conditions, recorded in `docs/threat-model.md`:
+
+- **Flathub is a trusted party.** Anyone who can publish `org.mozilla.firefox` on Flathub
+  (Mozilla's verified account, or a compromise of Flathub's infrastructure) can ship code that
+  runs as the user. Mitigations: verified publishers only, the Flatpak sandbox, and Flathub's
+  signed OSTree repository.
+- **Flatpak updates have no greenboot rollback.** greenboot protects the OS image only. A broken
+  Firefox or app update is not rolled back automatically. Mitigations: `flatpak update`
+  keeps the previous commit, so an admin can run `flatpak update --commit=<previous>` (a
+  `ujust` recipe follows in Phase 5). Updates also come from the publisher's own release
+  process.
