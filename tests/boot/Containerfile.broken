@@ -3,5 +3,6 @@
 # greenboot must return the machine to the previous deployment by itself.
 ARG BASE=localhost/kiezel:ci
 FROM ${BASE}
-RUN systemctl mask sddm.service
+RUN dm="$(basename "$(readlink -f /etc/systemd/system/display-manager.service)")" && \
+    echo "masking ${dm}" && systemctl mask "${dm}"
 LABEL org.opencontainers.image.title="Kiezel (deliberately broken, CI only)"

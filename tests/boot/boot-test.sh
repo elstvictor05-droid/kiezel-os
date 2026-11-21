@@ -114,8 +114,11 @@ else
 fi
 
 gb="$(ssh_vm 'systemctl show -p Result --value greenboot-healthcheck.service; systemctl is-active boot-complete.target' 2>&1 | xargs)"
-[[ "${gb}" == "success active" ]] && pass "greenboot healthy (boot-complete reached)" \
-    || fail "greenboot healthy" "${gb}"
+if [[ "${gb}" == "success active" ]]; then pass "greenboot healthy (boot-complete reached)"
+else
+    fail "greenboot healthy" "${gb}"
+    ssh_vm "journalctl -b --no-pager -o cat -u greenboot-healthcheck | tail -30" >> "${REPORT}" 2>&1
+fi
 
 tpm="$(ssh_vm 'test -c /dev/tpmrm0 && echo yes' 2>&1)"
 [[ "${tpm}" == "yes" ]] && pass "TPM2 device present" || fail "TPM2 device present"
