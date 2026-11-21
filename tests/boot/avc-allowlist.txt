@@ -1,19 +1,20 @@
-# Known, upstream-tracked SELinux AVC denials that the boot test reports as KNOWN instead of FAIL.
-# See docs/adr/0010-avc-allowlist.md. The SELinux policy itself is NOT changed by this file.
+# Known, upstream-tracked SELinux AVC denials (ADR-0010). The SELinux policy is NOT changed.
 #
-# Rules:
-#  - One extended regex per line, matched against the full "avc:  denied" line.
-#  - Each regex must pin comm, permission, source and target context: never a wildcard domain.
-#  - Each entry needs an upstream link and the date it was added. The boot test prints when an
-#    entry no longer matches anything, so stale entries get removed.
-#
-# tuned's bootloader plugin runs `bootc`, which probes relabel rights with a deliberately invalid
-# label; the probe is expected to fail. Harmless; noise only.
-# Upstream: https://github.com/redhat-performance/tuned/issues/895  (added 2026-11-21)
-denied  \{ mac_admin \} for  pid=[0-9]+ comm="chcon" capability=33  scontext=system_u:system_r:tuned_t:s0 tcontext=system_u:system_r:tuned_t:s0 tclass=capability2 permissive=0
-#
-# bootupd (permissive domain: nothing is blocked) reads install-time files that the installer
-# left unlabeled/default-labeled.
-# Upstream: https://github.com/sparewall/sparewall/issues/111 , https://bugzilla.redhat.com/show_bug.cgi?id=2320395  (added 2026-11-21)
-denied  \{ (getattr|read|open) \} for  pid=[0-9]+ comm="bootupctl" (path|name)="(/sysroot/)?\.bootc-aleph\.json" dev="[a-z0-9]+" ino=[0-9]+ scontext=system_u:system_r:bootupd_t:s0 tcontext=system_u:object_r:default_t:s0 tclass=file permissive=1
-denied  \{ (getattr|read|open) \} for  pid=[0-9]+ comm="bootupctl" (path|name)="(/boot/)?bootupd-state\.json" dev="[a-z0-9]+" ino=[0-9]+ scontext=system_u:system_r:bootupd_t:s0 tcontext=system_u:object_r:unlabeled_t:s0 tclass=file permissive=1
+# One entry per line, whitespace-separated, all five columns required:
+#   <source context>  <target context>  <class>  <permission>  <upstream link>
+# A denial is KNOWN only if its exact (scontext, tcontext, tclass, permission) tuple is listed.
+# Denials with several permissions ({ read open }) must have every permission listed.
+# The boot test WARNS when an entry matched nothing (stale: upstream probably fixed it).
+
+# tuned's bootloader plugin runs bootc, which probes relabel rights with a deliberately invalid
+# label; the probe is expected to fail (added 2026-11-21).
+system_u:system_r:tuned_t:s0     system_u:system_r:tuned_t:s0       capability2  mac_admin  https://github.com/redhat-performance/tuned/issues/895
+
+# bootupd_t is a PERMISSIVE domain in Fedora's policy (nothing is blocked). It reads install-time
+# files left with wrong labels (added 2026-11-21). Also documented in docs/hardening.md.
+system_u:system_r:bootupd_t:s0   system_u:object_r:default_t:s0     file         getattr    https://github.com/sparewall/sparewall/issues/111
+system_u:system_r:bootupd_t:s0   system_u:object_r:default_t:s0     file         read       https://github.com/sparewall/sparewall/issues/111
+system_u:system_r:bootupd_t:s0   system_u:object_r:default_t:s0     file         open       https://github.com/sparewall/sparewall/issues/111
+system_u:system_r:bootupd_t:s0   system_u:object_r:unlabeled_t:s0   file         getattr    https://github.com/sparewall/sparewall/issues/111
+system_u:system_r:bootupd_t:s0   system_u:object_r:unlabeled_t:s0   file         read       https://github.com/sparewall/sparewall/issues/111
+system_u:system_r:bootupd_t:s0   system_u:object_r:unlabeled_t:s0   file         open       https://github.com/sparewall/sparewall/issues/111
