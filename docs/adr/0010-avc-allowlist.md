@@ -1,6 +1,6 @@
 # ADR-0010: Known upstream AVC denials — test allowlist, SELinux policy unchanged
 
-- **Status:** Proposed (needs owner approval: it relaxes the "0 AVC denials" gate)
+- **Status:** Accepted (owner approval 2026-11-21, option 3 with conditions)
 - **Date:** 2026-11-21
 - **Phase:** 1
 
@@ -29,10 +29,22 @@ enforcing, greenboot healthy, rollback working) showed 12 denials. None come fro
    - The test prints a NOTE when an entry no longer matches anything, so it gets removed once
      upstream fixes it.
 
-## Decision (proposed)
+## Decision
 
-Option 3. Adding an entry requires a PR that links the upstream issue and explains why the
-denial is harmless. Wildcard domains are never allowed.
+Option 3, with the owner's conditions:
+
+1. **Match on the full tuple** `(source context, target context, class, permission)`, never on
+   loose regexes. `tests/boot/avc-check.py` parses each denial and requires **every**
+   permission in it to be allowlisted. `{ read write }` with only `read` listed is UNKNOWN.
+2. **Exactly one upstream link per entry.** The checker rejects entries without an `https://`
+   link and entries containing wildcards.
+3. **Stale entries warn.** An entry that matched nothing in a run is printed as `WARN stale AVC
+   allowlist entry`, so it gets removed once upstream fixes the cause.
+4. The **permissive `bootupd_t`** domain is documented as a known upstream exception in
+   `docs/hardening.md` and `docs/threat-model.md`.
+
+Adding an entry requires a PR that links the upstream issue and explains why the denial is
+harmless.
 
 ## Consequences
 
