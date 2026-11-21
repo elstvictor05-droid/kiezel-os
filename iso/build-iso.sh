@@ -49,13 +49,26 @@ PY
 
 if [[ ${TEST} -eq 1 ]]; then
     [[ -f "${TEST_PUBKEY}" ]] || { echo "--test needs --test-pubkey" >&2; exit 2; }
-    sed -i \
-        -e 's/^graphical$/text/' \
-        -e 's/^autopart .*/& --passphrase=kiezel-ci-test/' \
-        -e 's/^rootpw --lock$/rootpw --lock\nsshkey --username=root "'"$(cat "${TEST_PUBKEY}")"'"/' \
-        -e 's/^reboot$/bootloader --append="systemd.wants=sshd.service console=ttyS0"\npoweroff/' \
-        "${KS}"
-    sed -i '1i # !!! CI TEST KICKSTART: fixed passphrase and SSH key. Never publish. !!!' "${KS}"
+    # Plain string edits in Python: an SSH key may contain '/', '+' or '&', which break sed.
+    python3 -I - "${KS}" "${TEST_PUBKEY}" <<'PY'
+import sys
+ks_path, pub_path = sys.argv[1], sys.argv[2]
+pub = open(pub_path).read().strip()
+lines = open(ks_path).read().splitlines()
+out = ["# !!! CI TEST KICKSTART: fixed passphrase and SSH key. Never publish. !!!"]
+for line in lines:
+    if line == "graphical":
+        out.append("text")
+    elif line.startswith("autopart "):
+        out.append(line + " --passphrase=kiezel-ci-test")
+    elif line == "rootpw --lock":
+        out += [line, f'sshkey --username=root "{pub}"']
+    elif line == "reboot":
+        out += ['bootloader --append="systemd.wants=sshd.service console=ttyS0"', "poweroff"]
+    else:
+        out.append(line)
+open(ks_path, "w").write("\n".join(out) + "\n")
+PY
 fi
 
 tests/iso/check-kickstart.sh "${KS}"
