@@ -1,0 +1,34 @@
+#!/usr/bin/bash
+# Decide per network link whether the router's DNS takes part in normal lookups (ADR-0012).
+#   Quad9 answers  -> router link: default-route=no (router only for local routing domains)
+#   Quad9 silent   -> router link: default-route=yes (automatic fallback: captive portals,
+#                     networks that block outside DNS)
+# Called by the NetworkManager dispatcher on connect/connectivity changes and every 5 minutes by
+# kiezel-dns-route.timer, so it switches back to Quad9 after a portal login.
+set -uo pipefail
+
+mode="$(cat /etc/kiezel/dns-mode 2>/dev/null || echo quad9)"
+log() { echo "kiezel-dns-route: $*"; }
+
+# Links that received DNS servers from the network (typically the router).
+mapfile -t links < <(resolvectl dns 2>/dev/null | sed -nE 's/^Link [0-9]+ \(([^)]+)\): +[0-9a-fA-F].*/\1/p')
+[[ ${#links[@]} -gt 0 ]] || exit 0
+
+set_route() { for l in "${links[@]}"; do resolvectl default-route "${l}" "$1" 2>/dev/null; done; }
+
+if [[ "${mode}" != "quad9" ]]; then
+    # router mode: the network's DNS only; strict mode: links never take part (no fallback).
+    if [[ "${mode}" == "router" ]]; then set_route yes; else set_route no; fi
+    log "mode ${mode}: links ${links[*]} -> default-route $([[ "${mode}" == router ]] && echo yes || echo no)"
+    exit 0
+fi
+
+# Probe: with the links out of the default route, can the global resolver (Quad9) answer?
+set_route no
+resolvectl flush-caches 2>/dev/null
+if timeout 6 resolvectl query --cache=no --legend=no dns.quad9.net >/dev/null 2>&1; then
+    log "Quad9 reachable: links ${links[*]} only for local domains"
+else
+    set_route yes
+    log "Quad9 NOT reachable: falling back to the network's DNS on ${links[*]}"
+fi
