@@ -4,7 +4,10 @@
 # over SSH. Optionally runs the update/rollback scenarios.
 #
 # Usage:
-#   tests/boot/boot-test.sh --disk disk.qcow2 --key id_ed25519 [--registry HOST:PORT] [--workdir DIR]
+#   tests/boot/boot-test.sh --disk disk.qcow2 --key id_ed25519 [--registry HOST:PORT]
+#                           [--sigtest DIR] [--allow-skip] [--workdir DIR]
+#   --sigtest DIR  fixtures from tests/sign/sigtest-setup.sh (signature path; required unless
+#                  --allow-skip, which the workflow passes only for fork PRs)
 #
 # The disk must contain the test user "root" with the given SSH key and the kernel argument
 # systemd.wants=sshd.service (tests/boot/make-test-disk.sh does both). sshd is OFF in Kiezel;
@@ -19,7 +22,7 @@
 #   3. two timer runs after the rollback         -> the failed digest is NOT staged again
 set -uo pipefail
 
-DISK="" KEY="" REGISTRY="" WORKDIR="${PWD}/tests/out/boot"
+DISK="" KEY="" REGISTRY="" SIGTEST="" ALLOW_SKIP=0 WORKDIR="${PWD}/tests/out/boot"
 SSH_PORT="${SSH_PORT:-2222}"
 OVMF_CODE="${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.secboot.fd}"
 OVMF_VARS="${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.ms.fd}"
@@ -32,6 +35,8 @@ while [[ $# -gt 0 ]]; do
         --disk) DISK="$2"; shift 2 ;;
         --key) KEY="$2"; shift 2 ;;
         --registry) REGISTRY="$2"; shift 2 ;;
+        --sigtest) SIGTEST="$2"; shift 2 ;;
+        --allow-skip) ALLOW_SKIP=1; shift ;;   # fork PRs only: missing signature fixtures may SKIP
         --workdir) WORKDIR="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -159,26 +164,54 @@ booted="$(ssh_vm "bootc status --json | jq -r '.status.booted.image.image.image'
 [[ "${booted}" == "${KIEZEL_REF}:"* ]] && pass "booted image reference is ${booted}" \
     || fail "booted image reference is ${KIEZEL_REF}:*" "${booted}"
 
-# --- Signature policy against the real registry (canaries published by release.yml) -------
-if skopeo inspect --raw "docker://${KIEZEL_REF}:ci-canary-signed" >/dev/null 2>&1; then
-    if ssh_vm "podman pull -q ${KIEZEL_REF}:ci-canary-signed" >/dev/null 2>&1; then
-        pass "image signed with the Kiezel key is accepted"
-    else fail "image signed with the Kiezel key is accepted"; fi
-    out="$(ssh_vm "podman pull -q ${KIEZEL_REF}:ci-canary-unsigned" 2>&1)"
-    if [[ $? -ne 0 ]] && grep -qi 'signature' <<<"${out}"; then pass "UNSIGNED image in the Kiezel repository is rejected"
-    else fail "UNSIGNED image in the Kiezel repository is rejected" "${out:0:200}"; fi
+# --- Signature path (ADR-0003): runs in EVERY run, never skipped -------------------------------
+# Fixtures from tests/sign/sigtest-setup.sh, signed through ci/sign.sh (the release's own signing
+# command) with a throwaway key. Inside the VM the device's own podman/containers-image must:
+# accept the signed image, reject the unsigned one, and reject one signed with another key.
+if [[ -n "${SIGTEST}" ]]; then
+    reghost="" signed="" unsigned="" wrongkey=""   # set by digests.env
+    # shellcheck disable=SC1091
+    . "${SIGTEST}/digests.env"
+    [[ -n "${reghost}" && -n "${signed}" && -n "${unsigned}" && -n "${wrongkey}" ]] \
+        || fail "signature fixtures complete" "digests.env incomplete"
+    sig_repo="${reghost}/kiezel-sigtest"
+    reg_name="${reghost%%:*}"
+    scp_vm() { scp -q -i "${KEY}" -P "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR -o BatchMode=yes "$@"; }
+    scp_vm "${SIGTEST}/keys/test.pub" root@127.0.0.1:/etc/pki/kiezel-sigtest.pub \
+        || fail "copy signature-test public key into the VM"
+    ssh_vm "grep -q '${reg_name}' /etc/hosts || echo '10.0.2.2 ${reg_name}' >> /etc/hosts
+            mkdir -p /etc/containers/registries.conf.d
+            printf '[[registry]]\nlocation=\"${reghost}\"\ninsecure=true\n' > /etc/containers/registries.conf.d/98-sigtest.conf
+            printf 'docker:\n  ${sig_repo}:\n    use-sigstore-attachments: true\n' > /etc/containers/registries.d/sigtest.yaml
+            jq --arg s '${sig_repo}' '.transports.docker[\$s] = [{type:\"sigstoreSigned\",keyPaths:[\"/etc/pki/kiezel-sigtest.pub\"],signedIdentity:{type:\"matchRepository\"}}]' \
+               /etc/containers/policy.json > /tmp/p && cp /tmp/p /etc/containers/policy.json" \
+        || fail "install signature-test policy scope in the VM"
+
+    if ssh_vm "podman pull -q ${sig_repo}@${signed}" >/dev/null 2>&1; then
+        pass "VM accepts an image signed through ci/sign.sh (classic format)"
+    else fail "VM accepts an image signed through ci/sign.sh" "$(ssh_vm "podman pull -q ${sig_repo}@${signed}" 2>&1 | tail -1)"; fi
+    for kind in unsigned wrongkey; do
+        out="$(ssh_vm "podman pull -q ${sig_repo}@${!kind}" 2>&1)"
+        if [[ $? -ne 0 ]] && grep -qi 'signature' <<<"${out}"; then pass "VM rejects the ${kind} image ($(tail -1 <<<"${out}" | cut -c1-90))"
+        else fail "VM rejects the ${kind} image" "${out:0:200}"; fi
+    done
+elif [[ ${ALLOW_SKIP} -eq 1 ]]; then
+    skip "signature path in the VM" "no --sigtest fixtures (allowed: fork PR)"
 else
-    skip "signature canaries" "not published yet; created by the first release run"
+    fail "signature path in the VM" "no --sigtest fixtures; SKIP is only allowed on forks"
 fi
 
 # The update path itself: a plain 'bootc switch' (what the update timer effectively does) to an
-# UNSIGNED bootable image in our repository must be refused by the trust policy.
+# UNSIGNED bootable image in OUR repository must be refused by the trust policy.
 if skopeo inspect --raw "docker://${KIEZEL_REF}:ci-unsigned-bootable" >/dev/null 2>&1; then
     out="$(ssh_vm "bootc switch ${KIEZEL_REF}:ci-unsigned-bootable" 2>&1)"
     if [[ $? -ne 0 ]] && grep -qi 'signature' <<<"${out}"; then pass "bootc refuses to switch to an UNSIGNED Kiezel image"
     else fail "bootc refuses to switch to an UNSIGNED Kiezel image" "${out:0:300}"; ssh_vm "bootc switch ${KIEZEL_REF}:stable" >/dev/null 2>&1; fi
+elif [[ ${ALLOW_SKIP} -eq 1 ]]; then
+    skip "unsigned bootable image refused by bootc" "ci-unsigned-bootable not reachable (allowed: fork PR)"
 else
-    skip "unsigned bootable image refused by bootc" "ci-unsigned-bootable not published yet (first main build)"
+    fail "unsigned bootable image refused by bootc" "ci-unsigned-bootable not reachable; SKIP is only allowed on forks"
 fi
 
 # --- Update scenarios (ADR-0008) ---------------------------------------------------------------
