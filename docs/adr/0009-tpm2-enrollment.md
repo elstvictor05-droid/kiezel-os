@@ -1,6 +1,6 @@
 # ADR-0009: TPM2 auto-unlock enrollment
 
-- **Status:** Proposed (Phase 1 spike; final in Phase 4)
+- **Status:** Accepted (owner approval 2026-11-21: option 1, with conditions; built in Phase 4)
 - **Date:** 2026-11-21
 - **Phase:** 1
 
@@ -71,3 +71,30 @@ of the LUKS volume. That is the hard part:
   after every firmware or bootloader update. Rationale and risk go in `docs/hardening.md`.
 - Test in CI with `swtpm`: enroll, reboot, and expect **no** passphrase prompt. Then wipe the
   swtpm state and expect the passphrase prompt (the fallback).
+
+## Decision (2026-11-21)
+
+**Option 1:** Anaconda's graphical, translated passphrase screen at install time. After the first
+login, a one-time **administrator** prompt (polkit) enrolls TPM2 and creates a printable
+recovery key. Owner conditions:
+
+1. **PCR choice: PCR 7 only** (Secure Boot policy: the state of Secure Boot and which keys and
+   certificates are trusted).
+   - Why not PCR 0–5: they measure firmware and the bootloader binaries, so every firmware,
+     shim or GRUB update would break auto-unlock.
+   - What PCR 7 protects against: booting a different, untrusted chain (Secure Boot off, or
+     other keys), which then cannot unseal the disk key.
+   - What it does not protect against: an attacker who boots a *Microsoft-signed* chain and
+     can run code. That is accepted in the threat model, because the passphrase still guards
+     against offline disk theft whenever the TPM is not present.
+2. **Test that a shim or bootloader update through bootupd does not break TPM unlock.** In CI,
+   with swtpm: enroll, run `bootupctl update` with a newer shim and GRUB (Renovate base bump),
+   reboot, and expect no passphrase prompt. **If it does break**, unlock falls back to the
+   passphrase and the user sees a plain-language message after login: "Your computer asked for
+   the disk password because of a security update. Ask your helper to turn automatic unlocking
+   back on." A `ujust` recipe re-enrolls.
+3. **Without enrollment, the passphrase works on every boot.** The passphrase key slot is never
+   removed. The enrollment helper only *adds* a TPM2 slot and a recovery slot.
+4. **TPM2 auto-unlock and auto-login are never combined.** Together they would mean anyone who
+   switches the computer on is logged in. The mechanism (a check in the helper and in the
+   auto-login setting) is decided in Phase 2.

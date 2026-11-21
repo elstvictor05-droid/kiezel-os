@@ -50,6 +50,11 @@ ADR-0001 to ADR-0008, repository skeleton, config schema with CI validation, Ren
 - **v0.1 = a real release you can stop at:** a signed image and ISO that install encrypted,
   update automatically and roll back. Usable as a secure KDE desktop even without the
   accessibility layer. Tagged, with release notes, checksums and an ISO signature.
+- **v0.1 release blockers:**
+  - no false rollback on power-off with a staged update (greenboot-rs #219), proven by the
+    boot test;
+  - no rollback loop (the failed digest is never staged again);
+  - **at least one install and update test on real, old hardware**, not only in a VM.
 
 ### Phase 3 — accessibility, profiles, first-run
 - Plasma Setup plus Welcome Center extra pages (ADR-0007), nl_BE preselected.
