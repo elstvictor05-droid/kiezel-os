@@ -96,7 +96,7 @@ start_vm() {
         -drive "file=${DISK},if=virtio,format=qcow2" \
         -chardev "socket,id=chrtpm,path=${WORKDIR}/swtpm.sock" \
         -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
-        -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${PROBE_PORT}-:8080" -device virtio-net-pci,netdev=n0 \
+        -netdev "user,id=n0,domainname=home.arpa,hostfwd=tcp:127.0.0.1:${PROBE_PORT}-:8080" -device virtio-net-pci,netdev=n0 \
         -device "vhost-vsock-pci,guest-cid=${VSOCK_CID}" \
         -serial "file:${SERIAL}" -display none \
         -daemonize -pidfile "${WORKDIR}/qemu.pid" || { echo "QEMU failed to start" >&2; exit 1; }
@@ -206,9 +206,47 @@ if [[ "${inside}" == "200" && "${outside}" != "200" ]]; then
     pass "firewall: a listening service is reachable inside the VM (200) but NOT from the network (${outside})"
 else fail "firewall blocks incoming connections" "inside=${inside} outside=${outside}"; fi
 
-# DNS-over-TLS mode.
-dot="$(ssh_vm 'resolvectl status | grep -m1 -oiE "[+-]?DNSOverTLS(=[a-z]+)?"' 2>&1)"
-grep -qiE 'opportunistic|\+DNSOverTLS' <<<"${dot}" && pass "DNS-over-TLS opportunistic (${dot})" || fail "DNS-over-TLS opportunistic" "${dot}"
+# DNS (ADR-0012): Quad9 primary, the router's DNS only for local names and as automatic fallback.
+dns_link() { ssh_vm "resolvectl dns | sed -nE 's/^Link [0-9]+ \(([^)]+)\): +[0-9a-fA-F].*/\1/p' | head -1" 2>/dev/null; }
+link="$(dns_link)"
+ssh_vm 'systemctl start kiezel-dns-route.service' >/dev/null 2>&1
+glob="$(ssh_vm 'resolvectl dns | sed -n "s/^Global: //p"' 2>&1)"
+route="$(ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'" 2>&1)"
+q="$(ssh_vm 'resolvectl query --cache=no --legend=no example.com >/dev/null && echo ok' 2>&1)"
+if [[ "${glob}" == *"9.9.9.9#dns.quad9.net"* && "${route}" == "no" && "${q}" == "ok" ]]; then
+    pass "DNS: Quad9 is primary, router link (${link}) only for local domains, lookups work"
+else fail "DNS: Quad9 primary" "global='${glob}' ${link} default-route=${route} query=${q}"; fi
+tls="$(ssh_vm "resolvectl query --cache=no --legend=no fedoraproject.org >/dev/null; ss -tnH state established '( dport = :853 )' | grep -c ':853'" 2>&1)"
+if [[ "${tls}" =~ ^[1-9] ]]; then pass "DNS-over-TLS in use (${tls} TLS connection(s) to port 853)"
+else log "INFO  DNS-over-TLS not established on this network (opportunistic fallback to plain DNS to Quad9)"; fi
+
+# Local names keep working through the router (DHCP domain home.arpa; host maps nas.home.arpa).
+loc="$(ssh_vm 'getent hosts nas.home.arpa | cut -d" " -f1; getent hosts nas | cut -d" " -f1' 2>&1 | xargs)"
+[[ "${loc}" == "10.0.2.2 10.0.2.2" ]] && pass "DNS: local names via the router work (nas.home.arpa and short name 'nas')" \
+    || fail "DNS: local names via the router" "got '${loc}'"
+
+# Automatic fallback: Quad9 unreachable (like a captive portal or a DNS-filtering network).
+ssh_vm 'nft add table inet kiezelci; nft add chain inet kiezelci out "{ type filter hook output priority 0; }";
+        nft add rule inet kiezelci out ip daddr "{ 9.9.9.9, 149.112.112.112 }" drop;
+        nft add rule inet kiezelci out ip6 daddr "{ 2620:fe::fe, 2620:fe::9 }" drop;
+        systemctl start kiezel-dns-route.service' >/dev/null 2>&1
+route="$(ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'" 2>&1)"
+q="$(ssh_vm 'resolvectl flush-caches; resolvectl query --cache=no --legend=no example.org >/dev/null && echo ok' 2>&1)"
+[[ "${route}" == "yes" && "${q}" == "ok" ]] && pass "DNS: Quad9 blocked -> automatic fallback to the router's DNS, lookups still work" \
+    || fail "DNS fallback when Quad9 is unreachable" "default-route=${route} query=${q}"
+ssh_vm 'nft delete table inet kiezelci; systemctl start kiezel-dns-route.service' >/dev/null 2>&1
+route="$(ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'" 2>&1)"
+[[ "${route}" == "no" ]] && pass "DNS: back to Quad9 when it answers again" || fail "DNS returns to Quad9" "default-route=${route}"
+
+# Privacy choice "off" (ujust kiezel-dns-router) and back.
+rt="$(ssh_vm "/usr/libexec/kiezel/dns-mode router >/dev/null; resolvectl dns | sed -n 's/^Global: *//p'; resolvectl default-route ${link} | awk '{print \$NF}'; resolvectl query --cache=no --legend=no example.com >/dev/null && echo ok" 2>&1 | xargs)"
+ssh_vm '/usr/libexec/kiezel/dns-mode quad9' >/dev/null 2>&1
+[[ "${rt}" == "yes ok" ]] && pass "DNS: 'router' mode uses only the network's DNS and works" || fail "DNS router mode" "got '${rt}'"
+
+# Printers: mDNS only after marking THIS network as home, never in the default zone.
+pz="$(ssh_vm 'firewall-cmd --zone=kiezel --query-service=mdns; /usr/libexec/kiezel/printer-discovery on >/dev/null; firewall-cmd --get-active-zones | head -1 | cut -d" " -f1; /usr/libexec/kiezel/printer-discovery off >/dev/null; firewall-cmd --get-active-zones | head -1 | cut -d" " -f1' 2>&1 | xargs)"
+[[ "${pz}" == "no kiezel-home kiezel" ]] && pass "printers: mDNS closed by default; 'home' puts only this network in kiezel-home; 'off' restores" \
+    || fail "printer discovery zones" "got '${pz}'"
 
 # Services.
 svc="$(ssh_vm 'systemctl is-active sshd.service; systemctl is-enabled fwupd-refresh.timer; systemctl is-active usbguard.service' 2>&1 | xargs)"
