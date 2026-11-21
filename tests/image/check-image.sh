@@ -19,6 +19,8 @@ check "Kiezel scope requires sigstore signature" \
     jq -e --arg s "${scope}" '.transports.docker[$s][0].type == "sigstoreSigned"' "${policy}"
 check "Kiezel scope pins repository identity" \
     jq -e --arg s "${scope}" '.transports.docker[$s][0].signedIdentity.type == "matchRepository"' "${policy}"
+check "catch-all for other registries is reject (Simple/Standard; ADR-0004)" \
+    jq -e '.transports.docker[""][0].type == "reject"' "${policy}"
 check "no ublue-os scope is trusted" \
     jq -e '[.transports.docker | keys[] | select(test("ublue-os"))] | length == 0' "${policy}"
 
@@ -56,6 +58,29 @@ check "notice text exists in English and Dutch" \
 # --- First run (ADR-0007) --------------------------------------------------------
 check "installer locale captured before Plasma Setup" systemctl is-enabled kiezel-locale-capture.service
 check "installer region restored after Plasma Setup" systemctl is-enabled kiezel-locale-restore.path
+
+# --- Phase 2 hardening (docs/hardening.md) ---------------------------------------
+check "sysctl hardening file present" test -s /usr/lib/sysctl.d/60-kiezel-hardening.conf
+check "no user-namespace restriction in sysctl (Flatpak/Firefox need userns)" \
+    bash -c '! grep -rqE "user\.max_user_namespaces|unprivileged_userns_clone" /usr/lib/sysctl.d /etc/sysctl.d'
+check "boot parameters valid TOML, without init_on_free" \
+    python3 -c 'import tomllib,sys; k=tomllib.load(open("/usr/lib/bootc/kargs.d/10-kiezel-hardening.toml","rb"))["kargs"]; sys.exit(any(a.startswith("init_on_free") for a in k) or not k)'
+check "firewalld default zone is kiezel" grep -qx 'DefaultZone=kiezel' /etc/firewalld/firewalld.conf
+check "kiezel zone opens no ports, only dhcpv6-client" \
+    bash -c '! grep -q "<port" /usr/lib/firewalld/zones/kiezel.xml && [ "$(grep -c "<service" /usr/lib/firewalld/zones/kiezel.xml)" = 1 ]'
+check "firewalld enabled" systemctl is-enabled firewalld.service
+check "DNS-over-TLS opportunistic by default" \
+    grep -qx 'DNSOverTLS=opportunistic' /usr/lib/systemd/resolved.conf.d/50-kiezel-dns-over-tls.conf
+check "fwupd metadata refresh enabled" systemctl is-enabled fwupd-refresh.timer
+check "USBGuard installed but disabled" bash -c 'rpm -q usbguard && ! systemctl is-enabled usbguard.service'
+fx=/usr/lib64/firefox/distribution/policies.json
+check "Firefox: HTTPS-only forced" jq -e '.policies.HttpsOnlyMode == "force_enabled"' "${fx}"
+check "Firefox: telemetry off" jq -e '.policies.DisableTelemetry == true' "${fx}"
+check "Firefox: uBlock Origin force-installed" \
+    jq -e '.policies.ExtensionSettings["uBlock0@raymondhill.net"].installation_mode == "force_installed"' "${fx}"
+check "Firefox: primary password required to store passwords" jq -e '.policies.PrimaryPassword == true' "${fx}"
+check "ujust shows the Kiezel recipes" \
+    bash -c 'just --justfile /usr/share/ublue-os/justfile --list 2>/dev/null | grep -q kiezel-dns-strict'
 
 # --- Baseline security ----------------------------------------------------------
 check "SELinux configured enforcing" grep -qx 'SELINUX=enforcing' /etc/selinux/config
