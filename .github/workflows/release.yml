@@ -1,0 +1,90 @@
+name: release
+
+# Tagged release (e.g. v0.1.0). The installer tests are a HARD requirement: nothing is published
+# unless both pass (owner decision, Phase 2). Releases are marked "tech preview" until the
+# Simple profile exists (Phase 3).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/elstvictor05-droid/kiezel
+
+jobs:
+  installer-tests:
+    name: installer tests (required)
+    uses: ./.github/workflows/iso.yml
+
+  publish:
+    name: sign ISO + publish release
+    needs: installer-tests
+    runs-on: ubuntu-24.04
+    environment: release            # owner approval; holds the signing key
+    permissions:
+      contents: write               # create the GitHub Release
+      packages: write               # tag the image by digest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+
+      - name: Resolve the signed image this release points to
+        id: image
+        run: |
+          digest="$(skopeo inspect --format '{{.Digest}}' "docker://${IMAGE}:stable")"
+          tests/sign/check-format.sh ghcr.io "${IMAGE#ghcr.io/}" "${digest}"
+          tests/sign/device-verify.sh --expect accept --image "${IMAGE}@${digest}" \
+            --policy system_files/etc/containers/policy.json \
+            --registries-d system_files/etc/containers/registries.d \
+            --keys system_files/usr/share/pki/containers
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag the image by digest (${{ github.ref_name }})
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+          skopeo copy --preserve-digests "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:${GITHUB_REF_NAME}"
+          test "$(skopeo inspect --format '{{.Digest}}' "docker://${IMAGE}:${GITHUB_REF_NAME}")" = "${DIGEST}"
+
+      - name: Build production ISO
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q gpgv
+          iso/build-iso.sh out
+          ! grep -q 'CI TEST KICKSTART' out/kiezel.ks
+          mv out/kiezel-netinstall.iso "out/kiezel-${GITHUB_REF_NAME}-netinstall.iso"
+          (cd out && sha256sum "kiezel-${GITHUB_REF_NAME}-netinstall.iso" > SHA256SUMS)
+
+      - name: Sign the ISO (cosign bundle)
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          COSIGN_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          iso="out/kiezel-${GITHUB_REF_NAME}-netinstall.iso"
+          cosign sign-blob --yes --key env://COSIGN_PRIVATE_KEY --bundle "${iso}.sigstore.json" "${iso}"
+          cosign verify-blob --key cosign.pub --bundle "${iso}.sigstore.json" "${iso}"
+
+      - name: Publish GitHub Release (tech preview)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          cat > out/notes.md <<NOTES
+          **Tech preview.** Kiezel installs, updates and rolls back automatically, but the Simple
+          profile for older users is not there yet (Phase 3).
+
+          - Image: \`${IMAGE}:${GITHUB_REF_NAME}\` = \`${IMAGE}@${DIGEST}\` (signed, verified like a device)
+          - Installer: network install, needs internet; see docs/user-guide/installing.md
+          - Verify: \`sha256sum -c SHA256SUMS\` and
+            \`cosign verify-blob --key cosign.pub --bundle kiezel-${GITHUB_REF_NAME}-netinstall.iso.sigstore.json kiezel-${GITHUB_REF_NAME}-netinstall.iso\`
+          NOTES
+          gh release create "${GITHUB_REF_NAME}" --prerelease --title "Kiezel ${GITHUB_REF_NAME} (tech preview)" \
+            --notes-file out/notes.md \
+            "out/kiezel-${GITHUB_REF_NAME}-netinstall.iso" \
+            "out/kiezel-${GITHUB_REF_NAME}-netinstall.iso.sigstore.json" \
+            out/SHA256SUMS cosign.pub

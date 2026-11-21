@@ -50,6 +50,11 @@ ADR-0001 to ADR-0008, repository skeleton, config schema with CI validation, Ren
 - **v0.1 = a real release you can stop at:** a signed image and ISO that install encrypted,
   update automatically and roll back. Usable as a secure KDE desktop even without the
   accessibility layer. Tagged, with release notes, checksums and an ISO signature.
+- **Release mechanics:** pushing a tag `v*` runs `.github/workflows/release.yml`. The installer
+  tests (`iso.yml`: signed install with post-install checks, and refused unsigned install) are a
+  **hard requirement**. Only then is the ISO built, signed (`cosign sign-blob` bundle) and
+  published as a GitHub **pre-release** labelled *tech preview*, with `SHA256SUMS` and
+  `cosign.pub`. The image is tagged `:vX.Y.Z` by digest, after device-style verification.
 - **v0.1 release blockers:**
   - no false rollback on power-off with a staged update (greenboot-rs #219), proven by the
     boot test;
