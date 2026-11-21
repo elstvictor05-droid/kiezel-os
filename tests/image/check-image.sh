@@ -53,6 +53,10 @@ check "user notices enabled for all users" test -L /etc/systemd/user/graphical-s
 check "notice text exists in English and Dutch" \
     bash -c 'grep -q "^en.body=" /usr/share/kiezel/notices/update-failed && grep -q "^nl.body=" /usr/share/kiezel/notices/update-failed'
 
+# --- First run (ADR-0007) --------------------------------------------------------
+check "installer locale captured before Plasma Setup" systemctl is-enabled kiezel-locale-capture.service
+check "installer region restored after Plasma Setup" systemctl is-enabled kiezel-locale-restore.path
+
 # --- Baseline security ----------------------------------------------------------
 check "SELinux configured enforcing" grep -qx 'SELINUX=enforcing' /etc/selinux/config
 check "sshd not enabled" bash -c '! systemctl is-enabled sshd.service'

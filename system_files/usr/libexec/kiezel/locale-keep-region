@@ -1,0 +1,33 @@
+#!/usr/bin/bash
+# Work around a Plasma Setup bug (ADR-0007): at start-up it maps a regional locale it has no
+# separate translation for (nl_BE, fr_BE, de_AT, ...) to the base language, then sets the SYSTEM
+# locale to QLocale("<base>").name(), e.g. nl -> nl_NL. That silently replaces the installer's
+# choice (nl_BE) and with it Belgian date, number and currency formats.
+#
+#   capture  (before Plasma Setup, first boot only): remember the installer's LANG.
+#   restore  (after Plasma Setup finished): if the language is still the same (nl == nl) but the
+#            region changed, put the installer's region back. A different language chosen by the
+#            user in Plasma Setup is always kept.
+set -euo pipefail
+
+saved=/var/lib/kiezel/installer-locale.conf
+current() { sed -n 's/^LANG=//p' /etc/locale.conf 2>/dev/null | tr -d '"'; }
+
+case "${1:-}" in
+    capture)
+        mkdir -p /var/lib/kiezel
+        [[ -f "${saved}" ]] || { echo "LANG=$(current)" > "${saved}"; echo "kiezel-locale: installer locale $(current) saved"; }
+        ;;
+    restore)
+        [[ -f "${saved}" ]] || exit 0
+        want="$(sed -n 's/^LANG=//p' "${saved}")"
+        now="$(current)"
+        if [[ -n "${want}" && "${want}" != "${now}" && "${want%%_*}" == "${now%%_*}" ]]; then
+            localectl set-locale "LANG=${want}"
+            echo "kiezel-locale: restored ${want} (Plasma Setup had set ${now})"
+        else
+            echo "kiezel-locale: keeping ${now:-unset} (installer: ${want:-unset})"
+        fi
+        ;;
+    *) echo "usage: $0 capture|restore" >&2; exit 2 ;;
+esac

@@ -1,0 +1,13 @@
+[Unit]
+Description=Kiezel: remember the installer's locale before Plasma Setup changes it
+ConditionPathExists=!/etc/plasma-setup-done
+ConditionPathExists=!/var/lib/kiezel/installer-locale.conf
+Before=plasma-setup.service display-manager.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/kiezel/locale-keep-region capture
+
+[Install]
+WantedBy=multi-user.target

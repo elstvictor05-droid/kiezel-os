@@ -1,0 +1,7 @@
+[Unit]
+Description=Kiezel: restore the installer's region after Plasma Setup (same language only)
+ConditionPathExists=/var/lib/kiezel/installer-locale.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/kiezel/locale-keep-region restore
