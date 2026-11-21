@@ -1,37 +1,74 @@
 # Threat model
 
-> Phase 1 draft. Completed in Phase 2.
+> Version for v0.1 (tech preview). Reviewed at every phase. Controls are detailed in
+> [hardening.md](hardening.md); decisions are in [adr/](adr/).
 
-## What we protect
+## 1. What we protect (assets)
 
-1. **The user's files and accounts** (photos, mail, banking sessions) on a lost or stolen
+1. **The user's files and sessions:** photos, mail, banking and government logins on the
    computer.
-2. **The integrity of the OS** on every device: only images built and signed by this project
-   may run.
-3. **Availability:** an update must never leave an older, non-technical user with a computer
-   that does not start.
+2. **The integrity of the OS on every device:** only images built and signed by this project
+   may run (ADR-0003/0004).
+3. **Availability for a non-technical user:** an update must never leave someone with a computer
+   that does not start or has no login screen (ADR-0008).
+4. **The signing keys:** whoever holds them can push code to every device.
 
-## Against whom
+## 2. Who we defend against (adversaries)
 
-| Adversary | In scope | Main controls |
-|---|---|---|
-| Thief or finder of the laptop (offline disk access) | Yes | LUKS2 full-disk encryption; TPM2 bound to PCR 7 plus a passphrase (ADR-0009) |
-| Malicious website, mail attachment or scam | Yes (Phase 2–3) | Non-admin daily account, Flatpak sandboxing, Firefox policies |
-| Network attacker on a café Wi-Fi, or a tampered mirror | Yes | Signed images and sigstore verification on device and in the installer; TLS to the registry |
-| Compromised CI dependency or GitHub Action | Partly | Actions pinned by SHA; signing only in the protected `release` environment with manual approval |
-| Leak of the primary signing key | Partly | An attacker also needs registry write; backup key plus rotation and leak plan (ADR-0003) |
-| Compromise of Universal Blue or Fedora infrastructure | Partly | Base signature verified in CI; base pinned by digest; Renovate bumps wait 3 days and go through the boot test |
-| A helper with the admin password | **No** | Trusted by design |
-| State-level attacker with physical access and firmware implants | **No** | Out of scope for a desktop for older users |
-| Evil-maid attack with a Microsoft-signed boot chain while TPM auto-unlock is on | **Accepted risk** | PCR 7 choice (ADR-0009); TPM auto-unlock is never combined with auto-login |
+| # | Adversary | Typical attack | In scope | Main controls | Tested by |
+|---|---|---|---|---|---|
+| A1 | Thief or finder of a laptop | Reads the disk offline | **Yes** | LUKS2 full-disk encryption; passphrase on every boot until TPM2 enrollment (ADR-0009, PCR 7) | `iso.yml`: LUKS2 + passphrase prompt |
+| A2 | Scam website, malicious ad, mail attachment | Tricks the user into running something; drive-by exploit | **Yes** | Daily account without admin rights (Phase 3); Firefox with uBlock Origin, HTTPS-only and its sandbox; Flatpak sandboxing; SELinux | Boot test: Firefox policies, sandbox |
+| A3 | Hostile Wi-Fi or network attacker | MITM, redirects, scanning for open services | **Yes** | Firewall rejects incoming traffic; ICMP redirects ignored; signed updates over TLS; HTTPS-only | Boot test: listener unreachable from network |
+| A4 | Tampered registry, mirror or installer download | Ships a modified OS image | **Yes** | Sigstore signature checked on device **and** in the installer, key pinned in the image; ISO SHA-256 + cosign; Fedora ISO pinned by hash and GPG | Boot test + `iso.yml`: unsigned and wrong-key images refused |
+| A5 | Compromised CI dependency or GitHub Action | Malicious code in the build | **Partly** | Actions pinned by SHA; base image pinned by digest and signature-checked; signing only in the protected `release` environment with manual approval | Workflow review; Renovate PRs |
+| A6 | Leak of the primary signing key | Signs a malicious image | **Partly** | An attacker also needs write access to the registry; backup key plus rotation and leak plan (ADR-0003) | Procedure in ADR-0003 |
+| A7 | Compromised upstream (Universal Blue, Fedora) | Malicious base image or package | **Partly** | Base signature verified; base pinned by digest; Renovate bumps are at least 3 days old and pass the full boot test; owner approval before release | CI |
+| A8 | A broken update (no attacker) | System does not boot or has no login | **Yes** | greenboot health checks, automatic rollback, failed digest never staged again | Boot test: rollback, no loop, no false rollback |
+| A9 | Someone with a few minutes of physical access while the PC is off (evil maid) | Boots another OS, tampers with the boot chain | **Partly** | Secure Boot with Fedora's shim; TPM2 sealed to PCR 7. **Never TPM auto-unlock together with auto-login** (see §4) | Boot test: Secure Boot on |
+| A10 | A helper or family member with the admin password | Anything | **No** | Trusted by design | — |
+| A11 | State-level attacker with firmware implants | Persistent firmware compromise | **No** | Out of scope for a desktop for older users (fwupd keeps firmware current) | — |
 
-## Known upstream exceptions
+## 3. Deliberately not protected
+
+- **The admin user installing unsafe software.** The admin is trusted. Advanced users can open
+  container registries for themselves (ADR-0004).
+- **Privacy towards Fedora, Flathub, Mozilla and LVFS servers** (update checks, metadata). DNS
+  goes to the network's resolver unless strict DoT is chosen (hardening.md §3).
+- **Live attacks on an unlocked, logged-in session** (shoulder surfing, a stolen *running*
+  laptop). Screen lock defaults are set in Phase 3.
+
+## 4. TPM2 auto-unlock never together with auto-login (decision, Phase 2)
+
+Together they mean: anyone who switches the computer on gets a logged-in desktop. A1 and A9 would
+then only need the hardware. The mechanism, built in Phases 3 and 4:
+
+1. Kiezel ships **no auto-login**. Plasma Setup's temporary auto-login to its own `plasma-setup`
+   user, during first boot only, is the single exception, and Plasma Setup removes it when it
+   finishes.
+2. One guard, `/usr/libexec/kiezel/autologin-tpm-guard`, is used by **both** sides:
+   - the auto-login setting (a `ujust` recipe or the profile switch) **refuses** if the LUKS
+     header has a `systemd-tpm2` token;
+   - the TPM2 enrollment helper (ADR-0009) **refuses** if any display-manager auto-login is
+     configured for a real user.
+3. A greenboot **wanted** check (a warning, not a rollback) logs it if both are found anyway,
+   for example after manual editing.
+4. CI: a unit test of the guard script in both directions, plus an image check that no
+   auto-login configuration is shipped.
+
+## 5. Known upstream exceptions
 
 - **`bootupd_t` runs permissive** in Fedora's SELinux policy, so bootloader updates are not
   confined. We accept Fedora's decision rather than change policy ourselves. Mitigation: the
-  binary only comes from our signed image. See `docs/hardening.md` and ADR-0010.
+  binary only comes from our signed image. See hardening.md §9 and ADR-0010.
+- **Plasma Setup overwrites a regional locale** (nl_BE becomes nl_NL). This is a usability
+  issue, not a security one. Kiezel works around it (ADR-0007).
 
-## Deliberately not protected
+## 6. Residual risks for v0.1 (tech preview)
 
-- Users installing software outside Flathub as admin. The admin is trusted.
-- Privacy against Fedora's and Flathub's own servers (update checks, country mirror selection).
+| Risk | Why still open | Planned |
+|---|---|---|
+| Daily account without admin rights not enforced yet | Plasma Setup creates a `wheel` user by default | Phase 3 (Plasma Setup `UserGroups`, account page) |
+| No TPM2 auto-unlock yet: passphrase on every boot | Usability, not security | Phase 4 |
+| Only VMs tested | No old hardware tested yet | v0.1 blocker: test on a real old PC |
+| Firefox security updates follow our image cadence (RPM) | ADR-0011 pending | Flatpak Firefox (Phase 3, if approved) |
