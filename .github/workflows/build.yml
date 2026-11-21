@@ -70,17 +70,19 @@ jobs:
           sudo tests/boot/make-test-disk.sh "${LOCAL}" tests/out/ci_key.pub tests/out/disk
           sudo chown -R "$(id -u):$(id -g)" tests/out
 
-      - name: Build deliberately broken image and serve it from a local registry
+      - name: Serve good, good2 and deliberately broken images from a local registry
         run: |
-          sudo podman build -f tests/boot/Containerfile.broken --build-arg BASE="${LOCAL}" -t localhost:5000/kiezel:broken .
           sudo podman run -d --name registry -p 5000:5000 \
             docker.io/library/registry:3@sha256:52b489ad8e6f40d1a676702e3ce398ec796ce38f08fbb786e1f324baa12d84b8
-          sudo podman push --tls-verify=false localhost:5000/kiezel:broken
+          sudo podman tag "${LOCAL}" localhost:5000/kiezel:good
+          printf 'FROM %s\nLABEL kiezel.ci="good2"\n' "${LOCAL}" | sudo podman build -t localhost:5000/kiezel:good2 -f - .
+          sudo podman build -f tests/boot/Containerfile.broken --build-arg BASE="${LOCAL}" -t localhost:5000/kiezel:broken .
+          for t in good good2 broken; do sudo podman push --tls-verify=false "localhost:5000/kiezel:${t}"; done
 
-      - name: Boot test (Secure Boot, TPM2, AVC, greenboot, signature policy, rollback)
+      - name: Boot test (Secure Boot, TPM2, AVC, greenboot, signatures, update, power-off, rollback, no loop)
         run: |
           tests/boot/boot-test.sh --disk tests/out/disk/disk.qcow2 --key tests/out/ci_key \
-            --rollback-image 10.0.2.2:5000/kiezel:broken --workdir tests/out/boot
+            --registry 127.0.0.1:5000 --workdir tests/out/boot
 
       - name: Upload boot test report
         if: always()
@@ -89,7 +91,8 @@ jobs:
           name: boot-test-report
           path: |
             tests/out/boot/report.txt
-            tests/out/boot/serial.log
+            tests/out/boot/serial-*.log
+            tests/out/boot/avc*.txt
           if-no-files-found: ignore
 
       - name: Push unsigned candidate (main only)

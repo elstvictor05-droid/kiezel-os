@@ -1,21 +1,25 @@
 #!/usr/bin/bash
 # Kiezel boot test: boots a disk image under QEMU with UEFI Secure Boot (Microsoft-enrolled OVMF
 # vars, so Fedora's shim must be accepted) and an emulated TPM2, then checks the running system
-# over SSH. Optionally runs the greenboot rollback test.
+# over SSH. Optionally runs the update/rollback scenarios.
 #
 # Usage:
-#   tests/boot/boot-test.sh --disk disk.qcow2 --key id_ed25519 [--rollback-image REF] [--workdir DIR]
+#   tests/boot/boot-test.sh --disk disk.qcow2 --key id_ed25519 [--registry HOST:PORT] [--workdir DIR]
 #
 # The disk must contain the test user "root" with the given SSH key and the kernel argument
 # systemd.wants=sshd.service (tests/boot/make-test-disk.sh does both). sshd is OFF in Kiezel;
 # it is switched on only for these test disks.
 #
-# Rollback test: REF is an image in a registry reachable from the VM at 10.0.2.2 (the QEMU
-# host), e.g. 10.0.2.2:5000/kiezel:broken, whose required health check fails. The test switches
-# to it and expects greenboot to bring the VM back to the original deployment on its own.
+# Update scenarios (--registry): a plain HTTP registry on the host (e.g. 127.0.0.1:5000, seen by
+# the VM as 10.0.2.2:5000) holding kiezel:good, kiezel:good2 (same OS, different digest) and
+# kiezel:broken (health check fails). The test moves the tag kiezel:channel between them through
+# the registry API and lets the REAL update timer service (rpm-ostreed-automatic) do the work:
+#   1. update + power-off with a staged update  -> no false rollback (greenboot-rs #219)
+#   2. broken update                             -> automatic rollback + user notice
+#   3. two timer runs after the rollback         -> the failed digest is NOT staged again
 set -uo pipefail
 
-DISK="" KEY="" ROLLBACK_IMAGE="" WORKDIR="${PWD}/tests/out/boot"
+DISK="" KEY="" REGISTRY="" WORKDIR="${PWD}/tests/out/boot"
 SSH_PORT="${SSH_PORT:-2222}"
 OVMF_CODE="${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.secboot.fd}"
 OVMF_VARS="${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.ms.fd}"
@@ -27,7 +31,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --disk) DISK="$2"; shift 2 ;;
         --key) KEY="$2"; shift 2 ;;
-        --rollback-image) ROLLBACK_IMAGE="$2"; shift 2 ;;
+        --registry) REGISTRY="$2"; shift 2 ;;
         --workdir) WORKDIR="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -65,30 +69,45 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- Start emulated TPM2 and the VM ---------------------------------------------
-swtpm socket --tpm2 --daemon --pid "file=${WORKDIR}/swtpm.pid" \
-    --tpmstate "dir=${WORKDIR}/tpm" --ctrl "type=unixio,path=${WORKDIR}/swtpm.sock"
-
+# --- VM lifecycle -----------------------------------------------------------------------------
 cp "${OVMF_VARS}" "${WORKDIR}/OVMF_VARS.fd"
+BOOT=0
+start_vm() {
+    BOOT=$((BOOT + 1))
+    SERIAL="${WORKDIR}/serial-${BOOT}.log"
+    # QEMU shuts swtpm down when it exits, so (re)start it for every power-on. TPM state persists.
+    swtpm socket --tpm2 --daemon --pid "file=${WORKDIR}/swtpm.pid" \
+        --tpmstate "dir=${WORKDIR}/tpm" --ctrl "type=unixio,path=${WORKDIR}/swtpm.sock"
+    qemu-system-x86_64 \
+        -name kiezel-boot-test \
+        -machine q35,smm=on,accel=kvm -cpu host -m "${MEM_MB}" -smp "${VCPUS}" \
+        -global driver=cfi.pflash01,property=secure,value=on \
+        -drive "if=pflash,format=raw,unit=0,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,unit=1,file=${WORKDIR}/OVMF_VARS.fd" \
+        -drive "file=${DISK},if=virtio,format=qcow2" \
+        -chardev "socket,id=chrtpm,path=${WORKDIR}/swtpm.sock" \
+        -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
+        -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" -device virtio-net-pci,netdev=n0 \
+        -serial "file:${SERIAL}" -display none \
+        -daemonize -pidfile "${WORKDIR}/qemu.pid" || { echo "QEMU failed to start" >&2; exit 1; }
+}
 
-qemu-system-x86_64 \
-    -name kiezel-boot-test \
-    -machine q35,smm=on,accel=kvm -cpu host -m "${MEM_MB}" -smp "${VCPUS}" \
-    -global driver=cfi.pflash01,property=secure,value=on \
-    -drive "if=pflash,format=raw,unit=0,readonly=on,file=${OVMF_CODE}" \
-    -drive "if=pflash,format=raw,unit=1,file=${WORKDIR}/OVMF_VARS.fd" \
-    -drive "file=${DISK},if=virtio,format=qcow2" \
-    -chardev "socket,id=chrtpm,path=${WORKDIR}/swtpm.sock" \
-    -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
-    -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" -device virtio-net-pci,netdev=n0 \
-    -serial "file:${SERIAL}" -display none \
-    -daemonize -pidfile "${WORKDIR}/qemu.pid" || { echo "QEMU failed to start" >&2; exit 1; }
+wait_poweroff() {
+    local timeout="$1" start=${SECONDS} pid
+    pid="$(cat "${WORKDIR}/qemu.pid")"
+    while (( SECONDS - start < timeout )); do
+        kill -0 "${pid}" 2>/dev/null || return 0
+        sleep 3
+    done
+    return 1
+}
 
+start_vm
 log "== Kiezel boot test  $(date -u +%FT%TZ)"
 log "   disk=${DISK} mem=${MEM_MB}MB vcpus=${VCPUS} secureboot=on tpm2=swtpm"
 
 if ! wait_ssh 900; then
-    fail "VM reachable over SSH within 15 min" "see ${SERIAL}"
+    fail "VM reachable over SSH within 15 min" "see serial-${BOOT}.log"
     tail -50 "${SERIAL}" >&2
     exit 1
 fi
@@ -106,27 +125,25 @@ else fail "Secure Boot enabled" "${sb}"; fi
 se="$(ssh_vm getenforce 2>&1)"
 [[ "${se}" == "Enforcing" ]] && pass "SELinux enforcing" || fail "SELinux enforcing" "${se}"
 
-# AVC denials. Known upstream issues listed in tests/boot/avc-allowlist.txt (ADR-0010) are
-# reported as KNOWN; anything else fails the test.
-ALLOWLIST="$(dirname "$0")/avc-allowlist.txt"
+# AVC denials (ADR-0010): a denial is KNOWN only if its full (scontext, tcontext, tclass,
+# permission) tuple is in tests/boot/avc-allowlist.txt; anything else fails the test.
 ssh_vm "journalctl -b --no-pager -o cat | grep 'avc:  denied'" > "${WORKDIR}/avc.txt" 2>/dev/null || true
-grep -vE '^[[:space:]]*(#|$)' "${ALLOWLIST}" > "${WORKDIR}/avc-patterns.txt"
-unknown="$(grep -vEf "${WORKDIR}/avc-patterns.txt" "${WORKDIR}/avc.txt" || true)"
-known_count="$(grep -cEf "${WORKDIR}/avc-patterns.txt" "${WORKDIR}/avc.txt" || true)"
-total="$(wc -l < "${WORKDIR}/avc.txt")"
-if [[ -z "${unknown}" ]]; then
-    pass "0 unexpected SELinux AVC denials since boot (${known_count} known upstream, see avc-allowlist.txt)"
+python3 -I "$(dirname "$0")/avc-check.py" "$(dirname "$0")/avc-allowlist.txt" "${WORKDIR}/avc.txt" > "${WORKDIR}/avc-result.txt"
+avc_rc=$?
+summary="$(grep '^SUMMARY' "${WORKDIR}/avc-result.txt")"
+if [[ ${avc_rc} -eq 0 ]]; then
+    pass "0 unexpected SELinux AVC denials since boot (${summary#SUMMARY })"
 else
-    fail "0 unexpected SELinux AVC denials since boot" "$(grep -c . <<<"${unknown}") unexpected of ${total}"
-    head -20 <<<"${unknown}" >> "${REPORT}"
+    fail "0 unexpected SELinux AVC denials since boot" "${summary#SUMMARY }"
+    grep '^UNKNOWN' "${WORKDIR}/avc-result.txt" | head -20 >> "${REPORT}"
     {
         echo "--- AVC context (ausearch -i) ---"
         ssh_vm "ausearch -m AVC -ts boot -i 2>/dev/null | grep -E 'type=(SYSCALL|PROCTITLE)' | head -20"
     } >> "${REPORT}" 2>&1
 fi
-while read -r pattern; do
-    grep -qE "${pattern}" "${WORKDIR}/avc.txt" || log "NOTE  allowlist entry matched nothing (remove it if upstream fixed it): ${pattern:0:90}..."
-done < "${WORKDIR}/avc-patterns.txt"
+while read -r _ entry; do
+    log "WARN  stale AVC allowlist entry (matched nothing; upstream fixed?): ${entry}"
+done < <(grep '^STALE' "${WORKDIR}/avc-result.txt")
 
 gb="$(ssh_vm 'systemctl show -p Result --value greenboot-healthcheck.service; systemctl is-active boot-complete.target' 2>&1 | xargs)"
 if [[ "${gb}" == "success active" ]]; then pass "greenboot healthy (boot-complete reached)"
@@ -164,32 +181,97 @@ else
     skip "unsigned bootable image refused by bootc" "ci-unsigned-bootable not published yet (first main build)"
 fi
 
-# --- Rollback test (ADR-0008) -------------------------------------------------------
-if [[ -n "${ROLLBACK_IMAGE}" ]]; then
-    log "== Rollback test with ${ROLLBACK_IMAGE}"
-    original="$(ssh_vm "bootc status --json | jq -r '.status.booted.imageDigest // .status.booted.image.imageDigest'")"
-    ssh_vm "mkdir -p /etc/containers/registries.conf.d && printf '[[registry]]\nlocation=\"10.0.2.2:5000\"\ninsecure=true\n' > /etc/containers/registries.conf.d/99-ci.conf"
-    if ! ssh_vm "bootc switch ${ROLLBACK_IMAGE}" >> "${REPORT}" 2>&1; then
-        fail "switch to broken image staged"
-    else
-        pass "switch to broken image staged"
-        ssh_vm "systemctl reboot" 2>/dev/null || true
-        sleep 30
-        # greenboot: up to 3 failed boots, then rollback. Each failed boot waits ~2 min.
-        deadline=$((SECONDS + 2400)) back=0
-        while (( SECONDS < deadline )); do
-            if wait_ssh 60; then
-                now="$(ssh_vm "bootc status --json | jq -r '.status.booted.imageDigest // .status.booted.image.imageDigest'" 2>/dev/null)"
-                if [[ -n "${now}" && "${now}" == "${original}" ]]; then back=1; break; fi
+# --- Update scenarios (ADR-0008) ---------------------------------------------------------------
+booted_digest() { ssh_vm "bootc status --format json | jq -r '.status.booted.image.imageDigest // empty'" 2>/dev/null; }
+staged_digest() { ssh_vm "bootc status --format json | jq -r '.status.staged.image.imageDigest // empty'" 2>/dev/null; }
+
+# Point kiezel:<dst> at the manifest of kiezel:<src> (registry API; no image data copied).
+# Prints the manifest digest.
+retag() {
+    local src="$1" dst="$2" hdr body ctype digest
+    hdr="$(mktemp)" body="$(mktemp)"
+    curl -fsS -D "${hdr}" -o "${body}" \
+        -H 'Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
+        "http://${REGISTRY}/v2/kiezel/manifests/${src}"
+    ctype="$(grep -i '^content-type:' "${hdr}" | cut -d' ' -f2 | tr -d '\r')"
+    digest="$(grep -i '^docker-content-digest:' "${hdr}" | cut -d' ' -f2 | tr -d '\r')"
+    curl -fsS -X PUT -H "Content-Type: ${ctype}" --data-binary "@${body}" \
+        "http://${REGISTRY}/v2/kiezel/manifests/${dst}" >/dev/null
+    rm -f "${hdr}" "${body}"
+    echo "${digest}"
+}
+
+# Run the real automatic-update unit, as its timer would, and wait until it has finished.
+run_update_timer() {
+    ssh_vm "systemctl start --wait rpm-ostreed-automatic.service; systemctl show -p Result,ExecMainStatus --value rpm-ostreed-automatic.service | xargs" 2>&1
+}
+
+reboot_vm() { ssh_vm "systemctl reboot" >/dev/null 2>&1 || true; sleep 20; }
+
+if [[ -n "${REGISTRY}" ]]; then
+    vm_registry="10.0.2.2:${REGISTRY##*:}"
+    ssh_vm "mkdir -p /etc/containers/registries.conf.d && printf '[[registry]]\nlocation=\"${vm_registry}\"\ninsecure=true\n' > /etc/containers/registries.conf.d/99-ci.conf"
+
+    # -- Step 0: track the test channel, on the good image ------------------------------------
+    log "== Update scenarios via ${vm_registry}/kiezel:channel"
+    good="$(retag good channel)"
+    ssh_vm "bootc switch ${vm_registry}/kiezel:channel" >> "${REPORT}" 2>&1
+    reboot_vm
+    if wait_ssh 600 && [[ "$(booted_digest)" == "${good}" ]]; then pass "tracking the test channel on the good image"
+    else fail "tracking the test channel on the good image" "booted=$(booted_digest) expected=${good}"; fi
+
+    # -- Step 1: update staged by the timer, then POWER-OFF (greenboot-rs #219) --------------------
+    good2="$(retag good2 channel)"
+    out="$(run_update_timer)"
+    if [[ "$(staged_digest)" == "${good2}" ]]; then pass "update timer staged the new image (${out})"
+    else fail "update timer staged the new image" "staged='$(staged_digest)' timer='${out}'"; fi
+    ssh_vm "systemctl poweroff" >/dev/null 2>&1 || true
+    if wait_poweroff 300; then
+        start_vm
+        if wait_ssh 900; then
+            sleep 60   # give greenboot time to finish its checks on this boot
+            now="$(booted_digest)"
+            gbres="$(ssh_vm 'systemctl show -p Result --value greenboot-healthcheck.service')"
+            if [[ "${now}" == "${good2}" && "${gbres}" == "success" ]]; then
+                pass "power-off with a staged update: new image booted, healthy, NO false rollback (#219)"
+            else
+                fail "power-off with a staged update: no false rollback (#219)" "booted=${now} expected=${good2} greenboot=${gbres}"
             fi
-            sleep 20
+        else fail "VM came back after power-off"; fi
+    else fail "VM powered off with a staged update" "still running after 5 min"; fi
+
+    # -- Step 2: broken update -> automatic rollback ----------------------------------------------
+    broken="$(retag broken channel)"
+    out="$(run_update_timer)"
+    if [[ "$(staged_digest)" == "${broken}" ]]; then pass "update timer staged the broken image"
+    else fail "update timer staged the broken image" "staged='$(staged_digest)' timer='${out}'"; fi
+    reboot_vm
+    # Up to 3 failing boots of ~2.5 min each, then greenboot rolls back.
+    deadline=$((SECONDS + 2400)) back=0
+    while (( SECONDS < deadline )); do
+        if wait_ssh 60 && [[ "$(booted_digest)" == "${good2}" ]]; then back=1; break; fi
+        sleep 20
+    done
+    if [[ ${back} -eq 1 ]]; then pass "broken update rolled back automatically to the previous image"
+    else fail "broken update rolled back automatically" "not back on ${good2} after 40 min"; fi
+
+    if [[ ${back} -eq 1 ]]; then
+        if ssh_vm "grep -qxF '${broken}' /var/lib/kiezel/failed-digests"; then pass "failed image digest recorded by greenboot red hook"
+        else fail "failed image digest recorded by greenboot red hook" "$(ssh_vm 'cat /var/lib/kiezel/failed-digests 2>&1')"; fi
+        if ssh_vm "test -f /var/lib/kiezel/notices/update-failed"; then pass "plain-language notice queued for the user"
+        else fail "plain-language notice queued for the user"; fi
+
+        # -- Step 3: no rollback loop: two timer runs must NOT stage the failed digest again ----
+        loop=0
+        for run in 1 2; do
+            out="$(run_update_timer)"
+            st="$(staged_digest)"
+            log "      timer run ${run}: result='${out}' staged='${st:-none}'"
+            [[ "${st}" == "${broken}" ]] && loop=1
         done
-        if [[ ${back} -eq 1 ]]; then
-            pass "broken update rolled back automatically to the previous deployment"
-            ssh_vm "journalctl --no-pager -o cat -u greenboot-healthcheck -b -1 | tail -5" >> "${REPORT}" 2>&1 || true
-        else
-            fail "broken update rolled back automatically" "still not on original deployment after 40 min"
-        fi
+        if [[ ${loop} -eq 0 ]]; then pass "no rollback loop: 2 timer runs did not stage the failed image again"
+        else fail "no rollback loop: the failed image was staged again"; fi
+        ssh_vm "journalctl -b --no-pager -o cat -u rpm-ostreed-automatic | grep -i kiezel | tail -3" >> "${REPORT}" 2>&1
     fi
 fi
 

@@ -45,6 +45,14 @@ check "greenboot installed" rpm -q greenboot
 check "greenboot-healthcheck enabled" systemctl is-enabled greenboot-healthcheck.service
 check "Kiezel health checks present" test -x /usr/lib/greenboot/check/required.d/50-kiezel-core.sh
 
+check "greenboot red hook marks failed images" test -x /usr/lib/greenboot/red.d/50-kiezel-mark-failed.sh
+check "update gate wired into rpm-ostreed-automatic" \
+    grep -q '^ExecCondition=/usr/libexec/kiezel/update-gate' /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-kiezel-update-gate.conf
+check "update gate is executable" test -x /usr/libexec/kiezel/update-gate
+check "user notices enabled for all users" test -L /etc/systemd/user/graphical-session.target.wants/kiezel-notices.service
+check "notice text exists in English and Dutch" \
+    bash -c 'grep -q "^en.body=" /usr/share/kiezel/notices/update-failed && grep -q "^nl.body=" /usr/share/kiezel/notices/update-failed'
+
 # --- Baseline security ----------------------------------------------------------
 check "SELinux configured enforcing" grep -qx 'SELINUX=enforcing' /etc/selinux/config
 check "sshd not enabled" bash -c '! systemctl is-enabled sshd.service'
