@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Lint shell scripts
         run: |
-          mapfile -t files < <(git ls-files '*.sh' 'build/*' 'tests/*' | grep -vE '\.md$' || true)
+          # Shell scripts = *.sh files plus any tracked file whose first line is a bash/sh shebang.
+          mapfile -t files < <( { git ls-files '*.sh'; git ls-files | while read -r f; do
+            head -c 64 "$f" 2>/dev/null | head -1 | grep -qE '^#!.*(ba)?sh' && echo "$f"; done; } | sort -u)
           if [ "${#files[@]}" -eq 0 ]; then echo "no shell scripts yet"; exit 0; fi
           shellcheck --severity=warning "${files[@]}"
