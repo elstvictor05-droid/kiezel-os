@@ -37,9 +37,13 @@ FROM ghcr.io/ublue-os/kinoite-main:45@sha256:<digest>
 - The **tag** (`45`) is only documentation for humans and Renovate, so that a Fedora major
   upgrade shows up as a distinct, visible change. This is the one place the release number
   appears. It is needed because a bare digest says nothing about which Fedora it contains.
-- **Renovate** (`renovate.json`) proposes digest bumps daily and auto-merges them only when
-  build and boot test are green. A new Fedora release (`45` → `46`) is a separate PR that is
-  never auto-merged.
+- **Renovate** (`renovate.json`) proposes digest bumps **weekly**, and only for digests that
+  are at least **3 days old** (`minimumReleaseAge`). That gives upstream time to pull a bad
+  build. A bump is auto-merged only through GitHub's native auto-merge, which waits for the
+  **required status checks** under branch protection on `main`: image build and the full boot
+  test (Secure Boot, 0 AVC denials, signed origin, rollback). If a check is not required,
+  nothing is auto-merged. A new Fedora release (`45` → `46`) is a separate PR that is never
+  auto-merged.
   - Why Renovate and not Dependabot: Renovate natively parses a `Containerfile`, updates the
     digest next to a tag, and can treat digest versus major bumps differently. It needs the
     Renovate GitHub App on the repository (a one-time click by the owner).
