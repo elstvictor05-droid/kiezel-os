@@ -75,8 +75,8 @@ jobs:
           if-no-files-found: ignore
 
   production-iso:
+    # Built on PRs too: the production path (no --test) must never go untested again.
     name: production ISO (unsigned artifact; signed at release)
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +84,8 @@ jobs:
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q gpgv
           iso/build-iso.sh tests/out/iso
+          ! grep -q 'CI TEST KICKSTART' tests/out/iso/kiezel.ks   # never ship the test kickstart
+          grep -qx 'graphical' tests/out/iso/kiezel.ks
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kiezel-netinstall
