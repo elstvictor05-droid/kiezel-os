@@ -1,0 +1,19 @@
+# Known, upstream-tracked SELinux AVC denials that the boot test reports as KNOWN instead of FAIL.
+# See docs/adr/0010-avc-allowlist.md. The SELinux policy itself is NOT changed by this file.
+#
+# Rules:
+#  - One extended regex per line, matched against the full "avc:  denied" line.
+#  - Each regex must pin comm, permission, source and target context: never a wildcard domain.
+#  - Each entry needs an upstream link and the date it was added. The boot test prints when an
+#    entry no longer matches anything, so stale entries get removed.
+#
+# tuned's bootloader plugin runs `bootc`, which probes relabel rights with a deliberately invalid
+# label; the probe is expected to fail. Harmless; noise only.
+# Upstream: https://github.com/redhat-performance/tuned/issues/895  (added 2026-11-21)
+denied  \{ mac_admin \} for  pid=[0-9]+ comm="chcon" capability=33  scontext=system_u:system_r:tuned_t:s0 tcontext=system_u:system_r:tuned_t:s0 tclass=capability2 permissive=0
+#
+# bootupd (permissive domain: nothing is blocked) reads install-time files that the installer
+# left unlabeled/default-labeled.
+# Upstream: https://github.com/sparewall/sparewall/issues/111 , https://bugzilla.redhat.com/show_bug.cgi?id=2320395  (added 2026-11-21)
+denied  \{ (getattr|read|open) \} for  pid=[0-9]+ comm="bootupctl" (path|name)="(/sysroot/)?\.bootc-aleph\.json" dev="[a-z0-9]+" ino=[0-9]+ scontext=system_u:system_r:bootupd_t:s0 tcontext=system_u:object_r:default_t:s0 tclass=file permissive=1
+denied  \{ (getattr|read|open) \} for  pid=[0-9]+ comm="bootupctl" (path|name)="(/boot/)?bootupd-state\.json" dev="[a-z0-9]+" ino=[0-9]+ scontext=system_u:system_r:bootupd_t:s0 tcontext=system_u:object_r:unlabeled_t:s0 tclass=file permissive=1

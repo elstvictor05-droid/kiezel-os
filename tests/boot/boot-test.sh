@@ -106,19 +106,27 @@ else fail "Secure Boot enabled" "${sb}"; fi
 se="$(ssh_vm getenforce 2>&1)"
 [[ "${se}" == "Enforcing" ]] && pass "SELinux enforcing" || fail "SELinux enforcing" "${se}"
 
-avc="$(ssh_vm "journalctl -b --no-pager -o cat | grep -c 'avc:  denied'" 2>/dev/null)"
-if [[ "${avc}" == "0" ]]; then pass "0 SELinux AVC denials since boot"
+# AVC denials. Known upstream issues listed in tests/boot/avc-allowlist.txt (ADR-0010) are
+# reported as KNOWN; anything else fails the test.
+ALLOWLIST="$(dirname "$0")/avc-allowlist.txt"
+ssh_vm "journalctl -b --no-pager -o cat | grep 'avc:  denied'" > "${WORKDIR}/avc.txt" 2>/dev/null || true
+grep -vE '^[[:space:]]*(#|$)' "${ALLOWLIST}" > "${WORKDIR}/avc-patterns.txt"
+unknown="$(grep -vEf "${WORKDIR}/avc-patterns.txt" "${WORKDIR}/avc.txt" || true)"
+known_count="$(grep -cEf "${WORKDIR}/avc-patterns.txt" "${WORKDIR}/avc.txt" || true)"
+total="$(wc -l < "${WORKDIR}/avc.txt")"
+if [[ -z "${unknown}" ]]; then
+    pass "0 unexpected SELinux AVC denials since boot (${known_count} known upstream, see avc-allowlist.txt)"
 else
-    fail "0 SELinux AVC denials since boot" "${avc} denials"
-    ssh_vm "journalctl -b --no-pager -o cat | grep 'avc:  denied' | head -20" >> "${REPORT}" 2>&1
-    # Context to find the caller: which processes produced the denials, and tuned's own log.
+    fail "0 unexpected SELinux AVC denials since boot" "$(grep -c . <<<"${unknown}") unexpected of ${total}"
+    head -20 <<<"${unknown}" >> "${REPORT}"
     {
         echo "--- AVC context (ausearch -i) ---"
         ssh_vm "ausearch -m AVC -ts boot -i 2>/dev/null | grep -E 'type=(SYSCALL|PROCTITLE)' | head -20"
-        echo "--- tuned journal ---"
-        ssh_vm "journalctl -b --no-pager -o short-monotonic -u tuned -u tuned-ppd | tail -25"
     } >> "${REPORT}" 2>&1
 fi
+while read -r pattern; do
+    grep -qE "${pattern}" "${WORKDIR}/avc.txt" || log "NOTE  allowlist entry matched nothing (remove it if upstream fixed it): ${pattern:0:90}..."
+done < "${WORKDIR}/avc-patterns.txt"
 
 gb="$(ssh_vm 'systemctl show -p Result --value greenboot-healthcheck.service; systemctl is-active boot-complete.target' 2>&1 | xargs)"
 if [[ "${gb}" == "success active" ]]; then pass "greenboot healthy (boot-complete reached)"
