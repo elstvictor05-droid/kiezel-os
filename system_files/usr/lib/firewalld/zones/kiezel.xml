@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kiezel default zone: nothing comes in unless it answers a connection this computer made.
+     The only service is DHCPv6 (the computer asking the network for an IPv6 address).
+     Compare Fedora's FedoraWorkstation zone, which accepts ALL incoming TCP/UDP above 1024. -->
+<zone target="%%REJECT%%">
+  <short>Kiezel</short>
+  <description>Incoming connections are rejected. Only replies to connections started by this computer, and DHCPv6 address configuration, are allowed.</description>
+  <service name="dhcpv6-client"/>
+</zone>
