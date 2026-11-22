@@ -126,9 +126,16 @@ adm="$(ssh_vm 'id -nG beheerder 2>&1 | tr " " ","; passwd -S root | cut -d" " -f
 if [[ "${adm}" =~ ^beheerder,wheel\ (L|LK)\ beheerder$ ]]; then
     pass "installer created the administrator (beheerder in wheel); root locked; no daily account yet"
 else fail "administrator from the installer" "got '${adm}' (want: beheerder,wheel L beheerder)"; fi
-pse="$(ssh_vm 'systemctl show-environment >/dev/null; grep -h PLASMA_SETUP_USER_CREATION_OVERRIDE /usr/lib/environment.d/*.conf; test -e /etc/plasma-setup-done && echo done || echo pending' 2>&1 | xargs)"
-[[ "${pse}" == "PLASMA_SETUP_USER_CREATION_OVERRIDE=1 pending" ]] && pass "Plasma Setup will still create the daily account (override set, setup pending)" \
-    || fail "Plasma Setup pending with account override" "${pse}"
+# Image content, not installer behaviour: iso.yml installs the RELEASED :stable, which may predate
+# Phase 3. When the installed image ships the override it must be right; when it does not, this is
+# INFO (check-image.sh guarantees every new image ships it).
+if ssh_vm 'test -e /usr/lib/environment.d/60-kiezel-plasma-setup.conf' 2>/dev/null; then
+    pse="$(ssh_vm 'grep -h PLASMA_SETUP_USER_CREATION_OVERRIDE /usr/lib/environment.d/60-kiezel-plasma-setup.conf; test -e /etc/plasma-setup-done && echo done || echo pending' 2>&1 | xargs)"
+    [[ "${pse}" == "PLASMA_SETUP_USER_CREATION_OVERRIDE=1 pending" ]] && pass "Plasma Setup will still create the daily account (override set, setup pending)" \
+        || fail "Plasma Setup pending with account override" "${pse}"
+else
+    log "INFO  installed image predates the daily-account override (released :stable before Phase 3); not checked here"
+fi
 
 out="$(ssh_vm "bootc switch ghcr.io/elstvictor05-droid/kiezel:ci-unsigned-bootable" 2>&1)"
 if [[ $? -ne 0 ]] && grep -qi signature <<<"${out}"; then pass "installed system refuses an UNSIGNED Kiezel image"
