@@ -25,8 +25,9 @@ font_size() {
     kw --file kdeglobals --group General --key smallestReadableFont "Noto Sans,$((pt - 2)),-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
     kw --file kdeglobals --group General --key fixed "Noto Sans Mono,${pt},-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
     kw --file kdeglobals --group WM --key activeFont "Noto Sans,${pt},-1,5,700,0,0,0,0,0,0,0,0,0,0,1"
-    # Tell running Qt/KDE applications (including Plasma Setup itself) that fonts changed.
-    dbus-send --session --type=signal /KGlobalSettings org.kde.KGlobalSettings.notifyChange int32:1 int32:0 2>/dev/null || true
+    # Tell running Qt/KDE applications (including Plasma Setup itself) to reload their fonts. This
+    # is the signal Plasma 6's platform theme listens to (checked on screen in a VM).
+    dbus-send --session --type=signal /KDEPlatformTheme org.kde.KDEPlatformTheme.refreshFonts 2>/dev/null || true
 }
 
 reader() {
@@ -50,6 +51,7 @@ case "${1:-}" in
     contrast)
         case "${2:-}" in
             normal) plasma-apply-colorscheme BreezeLight ;;
+            # The scheme also sets frameContrast=1.0, so borders are clearly visible (3:1+).
             high)   plasma-apply-colorscheme KiezelHighContrast ;;
             *) echo "usage: $0 contrast normal|high" >&2; exit 2 ;;
         esac
@@ -62,7 +64,9 @@ case "${1:-}" in
         esac
         kw --file kdeglobals --group Kiezel --key ScreenReader "$([[ $2 == on ]] && echo true || echo false)" ;;
     first-login)
-        # Runs in every new KDE session; acts once per account.
+        # Runs in every new KDE session; acts once per account. Never in Plasma Setup's own
+        # session: its kdeglobals is copied to the new account and would carry the "done" mark.
+        [[ "$(id -un)" == plasma-setup ]] && exit 0
         [[ "$(kreadconfig6 --file kdeglobals --group Kiezel --key FirstLoginApplied)" == true ]] && exit 0
         [[ "$(kreadconfig6 --file kdeglobals --group Kiezel --key ScreenReader)" == true ]] && reader true
         kw --file kdeglobals --group Kiezel --key FirstLoginApplied true ;;

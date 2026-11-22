@@ -9,6 +9,7 @@ shadeSortColumn=false
 
 [KDE]
 contrast=10
+frameContrast=1.0
 
 [Colors:View]
 BackgroundNormal=0,0,0

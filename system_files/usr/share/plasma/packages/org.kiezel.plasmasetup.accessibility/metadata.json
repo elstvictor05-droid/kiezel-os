@@ -9,7 +9,9 @@
         "Description": "Text size, contrast and screen reader, chosen before anything else",
         "Id": "org.kiezel.plasmasetup.accessibility",
         "License": "Apache-2.0",
-        "Name": "Kiezel: easy to read"
+        "Name": "Easy to read",
+        "Name[nl]": "Goed leesbaar",
+        "Description[nl]": "Tekstgrootte, contrast en voorlezen, als allereerste gekozen"
     },
     "X-KDE-ParentApp": "org.kde.plasmasetup",
     "X-KDE-Weight": -10

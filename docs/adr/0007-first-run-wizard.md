@@ -118,5 +118,43 @@ Tests:
 - Image checks: the page is discovered by `kpackagetool6`, has the lowest weight, the executable
   engine is present, and `a11y-apply` writes the expected keys.
 - `qmllint` is clean.
-- Still open: an on-screen run in a VM with screenshots, which shows the page and proves the
-  choices carry over to the new account.
+
+### On-screen run (2026-11-22, installed CI-test disk, files added with `bootc usr-overlay`)
+
+![The Easy to read page as the first page of Plasma Setup](../user-guide/images/easy-to-read-default.png)
+![High contrast, applied live](../user-guide/images/easy-to-read-high-contrast.png)
+![The new account after its first login](../user-guide/images/first-login-high-contrast.png)
+
+What was checked, in order:
+
+1. The page is the **first** page, titled "Goed leesbaar". "Groot" is already applied when it
+   appears.
+2. "Extra groot" enlarges all text **live**, and the page scrolls when it no longer fits.
+3. "Voorlezen" starts Orca and speech-dispatcher in the setup session.
+4. "Hoog contrast" switches live; borders are white (measured on the screenshot).
+5. The following Plasma Setup pages (language, account, ...) keep extra-large text and high
+   contrast.
+6. After the account is created, its `kdeglobals` holds the text size, the colour scheme and
+   `[Kiezel] ScreenReader=true`.
+7. After the first login, the desktop is in high contrast with extra-large text, **Orca is
+   running**, `kaccessrc` has the screen reader enabled, and `FirstLoginApplied=true` is set.
+
+Three problems were found and fixed during this run:
+
+- **No live font update.** The legacy `KGlobalSettings.notifyChange` signal is ignored in Plasma 6.
+  The script now sends `org.kde.KDEPlatformTheme.refreshFonts`.
+- **Weak borders in high contrast.** They measured (51,51,51) on black, about 1.7:1, which fails
+  WCAG 1.4.11's 3:1. `plasma-apply-colorscheme` overwrites `[KDE] frameContrast` with the
+  scheme's value, so `frameContrast=1.0` now lives in the colour scheme itself.
+- **The screen reader choice would have been lost.** The first-login autostart also ran in Plasma
+  Setup's own session, marked itself done, and that mark was copied to the new account. It now
+  skips the `plasma-setup` user.
+
+Open items:
+
+- The **login screen** (plasmalogin greeter) still uses normal text and colours. It is
+  system-wide; making it follow the choice needs a privileged step. Phase 3 follow-up.
+- If Plasma Setup restarts mid-way, the page shows its defaults rather than the choices already
+  applied. Harmless on a real first boot.
+- The created account is still an **administrator** (`wheel`). The non-admin daily account is a
+  separate Phase 3 item.
