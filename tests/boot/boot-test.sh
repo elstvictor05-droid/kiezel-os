@@ -225,18 +225,43 @@ loc="$(ssh_vm 'getent hosts nas.home.arpa | cut -d" " -f1; getent hosts nas | cu
 [[ "${loc}" == "10.0.2.2 10.0.2.2" ]] && pass "DNS: local names via the router work (nas.home.arpa and short name 'nas')" \
     || fail "DNS: local names via the router" "got '${loc}'"
 
+# Wait until no kiezel-dns-route run is active or queued (max 30 s), so a check reads a settled
+# state instead of racing a run that is still probing.
+dns_settle() {
+    ssh_vm 'for i in $(seq 60); do
+                systemctl -q is-active kiezel-dns-route.service || systemctl list-jobs --no-legend | grep -q kiezel-dns-route || exit 0
+                sleep 0.5
+            done' >/dev/null 2>&1 || true
+    ssh_vm 'flock -w 30 /run/kiezel-dns-route.lock true' >/dev/null 2>&1 || true
+}
+# On a DNS failure keep the evidence: dns-route, NetworkManager (dispatcher, connectivity), resolved.
+dns_journal() {
+    { echo "--- journal (dns-route, NetworkManager, resolved) at $(date -u +%T)"
+      ssh_vm "journalctl -b --no-pager -o short-monotonic -u kiezel-dns-route -u NetworkManager -u NetworkManager-dispatcher -u systemd-resolved | tail -80; resolvectl status"
+    } >> "${WORKDIR}/dns-journal.txt" 2>&1 || true
+}
 # Automatic fallback: Quad9 unreachable (like a captive portal or a DNS-filtering network).
 ssh_vm 'nft add table inet kiezelci; nft add chain inet kiezelci out "{ type filter hook output priority 0; }";
         nft add rule inet kiezelci out ip daddr "{ 9.9.9.9, 149.112.112.112 }" drop;
         nft add rule inet kiezelci out ip6 daddr "{ 2620:fe::fe, 2620:fe::9 }" drop;
         systemctl start kiezel-dns-route.service' >/dev/null 2>&1
+dns_settle
 route="$(ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'" 2>&1)"
 q="$(ssh_vm 'resolvectl flush-caches; resolvectl query --cache=no --legend=no example.org >/dev/null && echo ok' 2>&1)"
 [[ "${route}" == "yes" && "${q}" == "ok" ]] && pass "DNS: Quad9 blocked -> automatic fallback to the router's DNS, lookups still work" \
-    || fail "DNS fallback when Quad9 is unreachable" "default-route=${route} query=${q}"
+    || { fail "DNS fallback when Quad9 is unreachable" "default-route=${route} query=${q}"; dns_journal; }
+# Race regression (run #31): the dispatcher, the timer's service and a manual run all at once,
+# while in fallback. Sampled every 0.5 s for 10 s: the link must NEVER leave the fallback.
+samples="$(ssh_vm "systemctl restart --no-block kiezel-dns-route.service
+        /usr/lib/NetworkManager/dispatcher.d/60-kiezel-dns-route ${link} connectivity-change &
+        /usr/libexec/kiezel/dns-route >/dev/null &
+        for i in \$(seq 20); do resolvectl default-route ${link} | awk '{print \$NF}'; sleep 0.5; done; wait" 2>&1 | sort | uniq -c | xargs)"
+[[ "${samples}" == "20 yes" ]] && pass "DNS: concurrent re-checks never drop the fallback (20/20 samples 'yes')" \
+    || { fail "DNS: concurrent re-checks dropped the fallback" "samples: ${samples}"; dns_journal; }
 ssh_vm 'nft delete table inet kiezelci; systemctl start kiezel-dns-route.service' >/dev/null 2>&1
+dns_settle
 route="$(ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'" 2>&1)"
-[[ "${route}" == "no" ]] && pass "DNS: back to Quad9 when it answers again" || fail "DNS returns to Quad9" "default-route=${route}"
+[[ "${route}" == "no" ]] && pass "DNS: back to Quad9 when it answers again" || { fail "DNS returns to Quad9" "default-route=${route}"; dns_journal; }
 
 # Privacy choice "off" (ujust kiezel-dns-router) and back.
 rt="$(ssh_vm "/usr/libexec/kiezel/dns-mode router >/dev/null; resolvectl dns | sed -n 's/^Global: *//p'; resolvectl default-route ${link} | awk '{print \$NF}'; resolvectl query --cache=no --legend=no example.com >/dev/null && echo ok" 2>&1 | xargs)"
