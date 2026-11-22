@@ -107,6 +107,15 @@ check "a11y-apply writes text size and screen reader choice into kdeglobals" \
              HOME=$h XDG_CONFIG_HOME=$h/.config /usr/libexec/kiezel/a11y-apply reader on >/dev/null 2>&1;
              grep -q "^font=Noto Sans,16," $h/.config/kdeglobals && grep -q "^ScreenReader=true" $h/.config/kdeglobals && grep -q "^Enabled=true" $h/.config/kaccessrc'
 
+# --- Welcome Center pages: printer at home, DNS privacy (Phase 3) -------------------
+check "Welcome Center: printer and DNS privacy pages installed" \
+    test -s /usr/share/plasma/plasma-welcome/extra-pages/01-KiezelPrinter.qml -a -s /usr/share/plasma/plasma-welcome/extra-pages/02-KiezelDnsPrivacy.qml
+check "polkit: Kiezel actions need an administrator (auth_admin_keep)" \
+    bash -c 'f=/usr/share/polkit-1/actions/org.kiezel.settings.policy; xmllint --noout "$f" &&
+             [[ $(grep -c "<allow_active>auth_admin_keep</allow_active>" "$f") -eq 2 ]] && ! grep -q "<allow_active>yes" "$f"'
+check "Welcome page can read the DNS mode without root" \
+    bash -c 'id nobody >/dev/null && setpriv --reuid=nobody --regid=nobody --clear-groups /usr/libexec/kiezel/dns-mode status 2>/dev/null | grep -qx "mode: quad9"'
+
 # --- Baseline security ----------------------------------------------------------
 check "SELinux configured enforcing" grep -qx 'SELINUX=enforcing' /etc/selinux/config
 check "sshd not enabled" bash -c '! systemctl is-enabled sshd.service'

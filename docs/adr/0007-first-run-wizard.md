@@ -158,3 +158,27 @@ Open items:
   applied. Harmless on a real first boot.
 - The created account is still an **administrator** (`wheel`). The non-admin daily account is a
   separate Phase 3 item.
+
+## Phase 3: Welcome Center pages (2026-11-22)
+
+Two Kiezel pages are added to Plasma Welcome
+(`/usr/share/plasma/plasma-welcome/extra-pages/`) after the first login:
+
+1. **"Heeft u een netwerkprinter thuis?"** One button opens printer discovery for **this
+   network only** (firewall zone `kiezel-home`), and one button undoes it. The page explains why
+   to do this only at home.
+2. **"Wie zoekt uw webadressen op?"** It shows the DNS privacy trade-off from ADR-0012 and
+   offers one switch: Quad9 (recommended) or the internet provider.
+
+Design rules learned on screen:
+
+- Plasma Welcome's page header (description plus `topContent`) **does not scroll**. With extra
+  large text, the buttons fell below the window and could not be reached. Both pages therefore
+  use an empty description and their own `ScrollView`, with the button right after one short
+  sentence and the longer explanation below it.
+- `GenericPage` is deprecated upstream; the pages use `Page`.
+- Changes go through `pkexec` with Kiezel polkit actions, so the password prompt states in plain
+  language what it is for (docs/hardening.md §7b).
+
+![Printer page](../user-guide/images/welcome-printer.png)
+![DNS privacy page](../user-guide/images/welcome-dns-privacy.png)
