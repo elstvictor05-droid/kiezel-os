@@ -1,0 +1,16 @@
+{
+    "KPackageStructure": "KDE/PlasmaSetup",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Kiezel contributors"
+            }
+        ],
+        "Description": "Text size, contrast and screen reader, chosen before anything else",
+        "Id": "org.kiezel.plasmasetup.accessibility",
+        "License": "Apache-2.0",
+        "Name": "Kiezel: easy to read"
+    },
+    "X-KDE-ParentApp": "org.kde.plasmasetup",
+    "X-KDE-Weight": -10
+}

@@ -91,6 +91,22 @@ check "Firefox: primary password required to store passwords" jq -e '.policies.P
 check "ujust shows the Kiezel recipes" \
     bash -c 'just --justfile /usr/share/ublue-os/justfile --list 2>/dev/null | grep -q kiezel-dns-strict'
 
+# --- First start: Kiezel "easy to read" page in Plasma Setup (ADR-0007, Phase 3) -------
+check "Plasma Setup discovers the Kiezel accessibility page" \
+    bash -c 'kpackagetool6 --type KDE/PlasmaSetup --list --global 2>/dev/null | grep -qx org.kiezel.plasmasetup.accessibility'
+check "Kiezel page comes before every Plasma Setup page (lowest weight)" \
+    bash -c 'k=$(jq ".\"X-KDE-Weight\"" /usr/share/plasma/packages/org.kiezel.plasmasetup.accessibility/metadata.json);
+             for m in /usr/share/plasma/packages/org.kde.plasmasetup.*/metadata.json; do [[ $(jq ".\"X-KDE-Weight\" // 0" "$m") -gt $k ]] || exit 1; done'
+check "the page can run commands (plasma5support executable engine present)" \
+    test -d /usr/lib64/qt6/qml/org/kde/plasma/plasma5support
+check "high-contrast colour scheme is installed" test -s /usr/share/color-schemes/KiezelHighContrast.colors
+check "reading choices are applied at the first login" \
+    bash -c 'test -x /usr/libexec/kiezel/a11y-apply && grep -q "a11y-apply first-login" /etc/xdg/autostart/kiezel-a11y-first-login.desktop'
+check "a11y-apply writes text size and screen reader choice into kdeglobals" \
+    bash -c 'h=$(mktemp -d); HOME=$h XDG_CONFIG_HOME=$h/.config /usr/libexec/kiezel/a11y-apply text xlarge >/dev/null 2>&1;
+             HOME=$h XDG_CONFIG_HOME=$h/.config /usr/libexec/kiezel/a11y-apply reader on >/dev/null 2>&1;
+             grep -q "^font=Noto Sans,16," $h/.config/kdeglobals && grep -q "^ScreenReader=true" $h/.config/kdeglobals && grep -q "^Enabled=true" $h/.config/kaccessrc'
+
 # --- Baseline security ----------------------------------------------------------
 check "SELinux configured enforcing" grep -qx 'SELINUX=enforcing' /etc/selinux/config
 check "sshd not enabled" bash -c '! systemctl is-enabled sshd.service'

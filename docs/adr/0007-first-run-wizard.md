@@ -88,3 +88,35 @@ source and package findings. The on-screen run in a VM, with screenshots, is sti
   "System language detected as: nl_BE" → "Overriding to base language nl" → "Successfully set
   system default language" → `LANG=nl_NL.UTF-8`. Related upstream report: KDE bug 516378 (missing
   regional variants). Report text prepared for the owner to file (product "Plasma Setup").
+
+## Phase 3 implementation: the "Easy to read" page (2026-11-22)
+
+Point 3 of the decision applies: Plasma Setup has no text size option (scaling is commented out
+upstream), so Kiezel ships a **Plasma Setup module** (`org.kiezel.plasmasetup.accessibility`,
+QML only, `X-KDE-Weight: -10`, so it is the **first** page):
+
+| Choice | Options | Default | Applied by |
+|---|---|---|---|
+| Text size | Normal (10 pt), Large (13 pt), Extra large (16 pt) | **Large**, applied as soon as the page appears | `kdeglobals` font keys |
+| Colours | Normal (Breeze Light), High contrast (white on black, yellow focus) | Normal | `plasma-apply-colorscheme`; scheme `KiezelHighContrast` ships in the image |
+| Read aloud | big on/off button; Meta+Alt+S keeps working | Off | `orca.service` now; `kaccessrc` in the new account |
+
+How the choices reach the new account: Plasma Setup copies the setup session's `kdeglobals`
+and `kwinrc` to the account it creates (`setnewuserglobaltheme`, `setnewuserdisplayscaling` in
+its KAuth helper). Text size and colours are native `kdeglobals` keys, so they carry over as is.
+The screen reader lives in `kaccessrc`, which is not copied, so the page also records
+`[Kiezel] ScreenReader=true` in `kdeglobals`. The autostart entry
+`kiezel-a11y-first-login.desktop` applies it once in the new account. The page runs
+`/usr/libexec/kiezel/a11y-apply` through the plasma5support executable engine.
+
+Strings are bilingual (Dutch for `nl*` locales, English otherwise), so no translation catalogue
+is needed. The page comes before Plasma Setup's language page; the installer has already set the
+system language.
+
+Tests:
+
+- Image checks: the page is discovered by `kpackagetool6`, has the lowest weight, the executable
+  engine is present, and `a11y-apply` writes the expected keys.
+- `qmllint` is clean.
+- Still open: an on-screen run in a VM with screenshots, which shows the page and proves the
+  choices carry over to the new account.
