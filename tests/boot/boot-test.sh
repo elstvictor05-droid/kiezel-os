@@ -78,6 +78,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Diagnosis when the test is stopped from outside (the workflow wraps it in 'timeout', so a hang
+# fails within minutes instead of hitting the job limit) or cannot reach the VM. Every ssh call
+# here is bounded, so a hung VM cannot hang the diagnosis too.
+diagnose() {
+    local why="$1" out="${WORKDIR}/diag.txt"
+    {
+        echo "=== Kiezel boot test diagnosis: ${why}  $(date -u +%FT%TZ)"
+        echo "--- last check lines in the report"; tail -5 "${REPORT}"
+        echo "--- QEMU process"; [[ -f "${WORKDIR}/qemu.pid" ]] && ps -o pid,stat,etime,cmd -p "$(cat "${WORKDIR}/qemu.pid")" 2>&1
+        echo "--- serial (${SERIAL}), last 80 lines"; tail -80 "${SERIAL}" 2>&1
+        echo "--- VM state over SSH (each call max 15 s)"
+        for c in "systemctl is-system-running" "systemctl --failed --no-legend --plain" \
+                 "systemctl list-jobs --no-legend" "bootc status --format humanreadable" \
+                 "resolvectl status" "uptime; free -m"; do
+            echo "# ${c}"; timeout 15 ssh "${SSH_OPTS[@]}" root@vsock "${c}" 2>&1 | head -60 || echo "(no answer)"
+        done
+        echo "--- journals: last 200 lines (resolved, NetworkManager, dns-route, dns-watch, flatpak preinstall)"
+        timeout 30 ssh "${SSH_OPTS[@]}" root@vsock "journalctl -b --no-pager -o short-monotonic -n 200 -u systemd-resolved -u NetworkManager -u kiezel-dns-route -u kiezel-dns-watch -u kiezel-flatpak-preinstall" 2>&1 || echo "(no answer)"
+    } > "${out}" 2>&1
+    log "DIAG  ${why}: see diag.txt"
+}
+on_stop() {
+    diagnose "stopped by $1 (time limit?)"
+    log "RESULT: stopped by $1 after $((SECONDS / 60)) min; diag.txt has the VM state"
+    exit 124
+}
+trap 'on_stop SIGTERM' TERM
+trap 'on_stop SIGINT' INT
+
 # --- VM lifecycle -----------------------------------------------------------------------------
 cp "${OVMF_VARS}" "${WORKDIR}/OVMF_VARS.fd"
 BOOT=0
@@ -119,6 +148,7 @@ log "   disk=${DISK} mem=${MEM_MB}MB vcpus=${VCPUS} secureboot=on tpm2=swtpm"
 if ! wait_ssh 900; then
     fail "VM reachable over SSH within 15 min" "see serial-${BOOT}.log"
     tail -50 "${SERIAL}" >&2
+    diagnose "VM not reachable over SSH"
     exit 1
 fi
 pass "VM booted and reachable"

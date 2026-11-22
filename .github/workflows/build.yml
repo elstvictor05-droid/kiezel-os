@@ -24,7 +24,7 @@ jobs:
   build:
     name: build + boot test
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 70
     permissions:
       contents: read
       packages: write        # push UNSIGNED candidates on main only; devices reject them until signed
@@ -99,8 +99,11 @@ jobs:
           echo "b5314a07fd85fa3ffc7da57b508f0108ec3280d84e4af823f805d95cbbc2428c  tests/out/lynis.tar.gz" | sha256sum -c -
 
       - name: Boot test (Secure Boot, TPM2, AVC, greenboot, hardening, signature path, update, rollback)
+        timeout-minutes: 35
         run: |
-          tests/boot/boot-test.sh --disk tests/out/disk/disk.qcow2 --key tests/out/ci_key \
+          # The test stops itself at 32 min and writes diag.txt (serial, journals, VM state; max ~2 min) before
+          # the step limit of 35 min kills it without a diagnosis.
+          timeout --signal=TERM --kill-after=150s 32m tests/boot/boot-test.sh --disk tests/out/disk/disk.qcow2 --key tests/out/ci_key \
             --registry 127.0.0.1:5000 --sigtest tests/out/sigtest --lynis tests/out/lynis.tar.gz --workdir tests/out/boot \
             ${{ github.event.pull_request.head.repo.fork == true && '--allow-skip' || '' }}
 
@@ -119,6 +122,7 @@ jobs:
           name: boot-test-report
           path: |
             tests/out/boot/report.txt
+            tests/out/boot/diag.txt
             tests/out/boot/serial-*.log
             tests/out/boot/avc*.txt
             tests/out/boot/dns-journal.txt
