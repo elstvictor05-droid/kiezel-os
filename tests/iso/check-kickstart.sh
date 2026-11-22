@@ -18,6 +18,23 @@ for ks in "$@"; do
         echo "FAIL  ${ks}: %pre does not install a sigstoreSigned policy" >&2
         rc=1
     fi
-    [[ ${rc} -eq 0 ]] && echo "PASS  ${ks}: signature verification enforced"
+    # Administrator (ADR-0007, owner decision a): in a production kickstart the helper creates the
+    # admin in the installer. Any rootpw line (even --lock) makes Anaconda skip that step, and a
+    # user line would bake an account (and maybe a password) into a public ISO.
+    if ! grep -q '^# !!! CI TEST KICKSTART' "${ks}"; then
+        if grep -nE '^[[:space:]]*(rootpw|user)[[:space:]]' "${ks}"; then
+            echo "FAIL  ${ks}: production kickstart must not contain rootpw/user (the installer must ask for the administrator)" >&2
+            rc=1
+        fi
+    fi
+    if ! grep -qE '^[[:space:]]*passwd -l root' "${ks}"; then
+        echo "FAIL  ${ks}: %post does not lock root when an administrator exists" >&2
+        rc=1
+    fi
+    if ! grep -qE '^[[:space:]]*sed -i .*UID_MIN.*/etc/login\.defs' "${ks}"; then
+        echo "FAIL  ${ks}: %post does not hide the administrator on the login screen (UID_MIN)" >&2
+        rc=1
+    fi
+    [[ ${rc} -eq 0 ]] && echo "PASS  ${ks}: signature verification enforced; administrator asked in the installer"
 done
 exit "${rc}"

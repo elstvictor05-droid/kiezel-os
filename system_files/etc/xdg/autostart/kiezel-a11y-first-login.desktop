@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Kiezel: apply reading choices from the first start
+Exec=/usr/libexec/kiezel/a11y-apply first-login
+OnlyShowIn=KDE;
+NoDisplay=true
+X-KDE-autostart-phase=1

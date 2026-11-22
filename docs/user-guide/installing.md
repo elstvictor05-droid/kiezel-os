@@ -66,12 +66,18 @@ start, so you will rarely need the passphrase. Keep the paper anyway.
 
 ## Step 5: Create the administrator account
 
-This account is for installing updates and changing settings. Give it to the person who helps
-you with the computer, or keep it on the same paper as the passphrase.
+This account is for the **helper**: the person who installs Kiezel and helps with the computer
+later. It is **not** the account for daily use; that one is made at first start (step 7) and has
+no administrator rights. Write both the passphrase and this password on the
+[helper sheet](helper-sheet.md) (print it before you start).
 
 1. Click **User Creation**. **[screenshot]**
-2. Fill in a name, for example `beheerder` (Dutch for administrator), and a password.
+2. Fill in a name, for example `beheerder` (Dutch for administrator), and a password of at least
+   12 characters.
 3. Leave **Make this user administrator** switched on, then click **Done**.
+4. Leave **Root Account** alone. Kiezel keeps root locked.
+
+The installer does not continue until an administrator exists.
 
 ## Step 6: Install
 
@@ -80,6 +86,8 @@ it restarts. Remove the USB stick.
 
 ## Step 7: First start
 
-At first start, Kiezel asks for your language, Wi-Fi and **your own everyday account**. That is
-the account you use every day. It cannot accidentally break the system. See
+At first start, the first page is **Goed leesbaar** (easy to read): text size, read aloud and
+high contrast. Then Kiezel asks for your language, Wi-Fi and **your own everyday account**. That
+is the account you use every day. It has no administrator rights, so it cannot accidentally break
+the system; changing system settings asks for the administrator's password. See
 [First start](first-start.md) (Phase 3).

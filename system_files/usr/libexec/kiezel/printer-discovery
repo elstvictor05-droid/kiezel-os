@@ -13,7 +13,12 @@ con="${2:-$(nmcli -t -f NAME,DEVICE,TYPE connection show --active | awk -F: '$3 
 case "${1:-}" in
     on)  zone="kiezel-home" ;;
     off) zone="" ;;
-    status) echo "${con}: zone=$(nmcli -g connection.zone connection show "${con}")"; exit 0 ;;
+    status)
+        # Both what is configured (NetworkManager) and what the firewall really applies. Needs no
+        # root: the Welcome Center page reads it as the user.
+        dev="$(nmcli -g GENERAL.DEVICES connection show "${con}" | head -1)"
+        echo "${con}: zone=$(nmcli -g connection.zone connection show "${con}") firewall=$(firewall-cmd --get-zone-of-interface="${dev}" 2>/dev/null || echo unknown)"
+        exit 0 ;;
     *) echo "usage: $0 on|off|status [connection]" >&2; exit 2 ;;
 esac
 nmcli connection modify "${con}" connection.zone "${zone}"

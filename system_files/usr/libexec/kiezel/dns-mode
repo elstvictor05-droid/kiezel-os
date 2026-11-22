@@ -8,6 +8,11 @@
 set -euo pipefail
 
 dropin=/etc/systemd/resolved.conf.d/90-kiezel-dns-mode.conf
+# "status" needs no privileges (the Welcome Center page reads it as the user).
+if [[ "${1:-}" == status ]]; then
+    echo "mode: $(cat /etc/kiezel/dns-mode 2>/dev/null || echo quad9)"
+    resolvectl status | grep -E 'DNSOverTLS|Current DNS|Default Route' | head -6; exit 0
+fi
 mkdir -p /etc/kiezel /etc/systemd/resolved.conf.d
 case "${1:-}" in
     quad9)
@@ -24,9 +29,6 @@ case "${1:-}" in
         esac
         printf '# Written by ujust kiezel-dns-strict\n[Resolve]\nDNS=\nDNS=%s\nDNSOverTLS=yes\nDomains=~.\n' "${servers}" > "${dropin}"
         echo strict > /etc/kiezel/dns-mode ;;
-    status)
-        echo "mode: $(cat /etc/kiezel/dns-mode 2>/dev/null || echo quad9)"
-        resolvectl status | grep -E 'DNSOverTLS|Current DNS|Default Route' | head -6; exit 0 ;;
     *) echo "usage: $0 quad9 | router | strict [quad9|cloudflare] | status" >&2; exit 2 ;;
 esac
 systemctl restart systemd-resolved

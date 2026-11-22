@@ -1,0 +1,75 @@
+#!/usr/bin/bash
+# Apply the reading choices from Kiezel's first-start page (Plasma Setup module
+# org.kiezel.plasmasetup.accessibility). ADR-0007, Phase 3.
+#
+# Plasma Setup copies the setup session's ~/.config/kdeglobals (and kwinrc) to the account it
+# creates. So everything chosen in the setup session is written to kdeglobals:
+#   - text size and colour scheme: native KDE keys, they simply carry over;
+#   - screen reader: [Kiezel] ScreenReader=true, applied by "first-login" in the new account,
+#     because the screen reader setting itself lives in kaccessrc, which is not copied.
+#
+# Usage:
+#   a11y-apply text normal|large|xlarge
+#   a11y-apply contrast normal|high
+#   a11y-apply reader on|off
+#   a11y-apply first-login          (autostart, once per account)
+set -uo pipefail
+
+kw() { kwriteconfig6 --notify "$@"; }
+
+font_size() {
+    local pt="$1" f
+    for f in font menuFont toolBarFont; do
+        kw --file kdeglobals --group General --key "${f}" "Noto Sans,${pt},-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+    done
+    kw --file kdeglobals --group General --key smallestReadableFont "Noto Sans,$((pt - 2)),-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+    kw --file kdeglobals --group General --key fixed "Noto Sans Mono,${pt},-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+    kw --file kdeglobals --group WM --key activeFont "Noto Sans,${pt},-1,5,700,0,0,0,0,0,0,0,0,0,0,1"
+    # Tell running Qt/KDE applications (including Plasma Setup itself) to reload their fonts. This
+    # is the signal Plasma 6's platform theme listens to (checked on screen in a VM).
+    dbus-send --session --type=signal /KDEPlatformTheme org.kde.KDEPlatformTheme.refreshFonts 2>/dev/null || true
+}
+
+reader() {
+    kw --file kaccessrc --group ScreenReader --key Enabled "$1"
+    if [[ "$1" == true ]]; then
+        systemctl --user start orca.service 2>/dev/null || setsid -f orca --replace >/dev/null 2>&1
+    else
+        systemctl --user stop orca.service 2>/dev/null || pkill -u "$(id -u)" -x orca
+    fi
+}
+
+case "${1:-}" in
+    text)
+        case "${2:-}" in
+            normal) font_size 10 ;;
+            large)  font_size 13 ;;
+            xlarge) font_size 16 ;;
+            *) echo "usage: $0 text normal|large|xlarge" >&2; exit 2 ;;
+        esac
+        kw --file kdeglobals --group Kiezel --key TextSize "$2" ;;
+    contrast)
+        case "${2:-}" in
+            normal) plasma-apply-colorscheme BreezeLight ;;
+            # The scheme also sets frameContrast=1.0, so borders are clearly visible (3:1+).
+            high)   plasma-apply-colorscheme KiezelHighContrast ;;
+            *) echo "usage: $0 contrast normal|high" >&2; exit 2 ;;
+        esac
+        kw --file kdeglobals --group Kiezel --key Contrast "$2" ;;
+    reader)
+        case "${2:-}" in
+            on)  reader true ;;
+            off) reader false ;;
+            *) echo "usage: $0 reader on|off" >&2; exit 2 ;;
+        esac
+        kw --file kdeglobals --group Kiezel --key ScreenReader "$([[ $2 == on ]] && echo true || echo false)" ;;
+    first-login)
+        # Runs in every new KDE session; acts once per account. Never in Plasma Setup's own
+        # session: its kdeglobals is copied to the new account and would carry the "done" mark.
+        [[ "$(id -un)" == plasma-setup ]] && exit 0
+        [[ "$(kreadconfig6 --file kdeglobals --group Kiezel --key FirstLoginApplied)" == true ]] && exit 0
+        [[ "$(kreadconfig6 --file kdeglobals --group Kiezel --key ScreenReader)" == true ]] && reader true
+        kw --file kdeglobals --group Kiezel --key FirstLoginApplied true ;;
+    *)
+        sed -n '2,16p' "$0" >&2; exit 2 ;;
+esac

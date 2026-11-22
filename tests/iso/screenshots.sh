@@ -47,7 +47,7 @@ PY
 
 # Unlock LUKS over serial.
 for _ in $(seq 1 200); do
-    strings "${WORKDIR}/serial-shots.log" 2>/dev/null | grep -q 'enter passphrase' && break; sleep 3
+    grep -aq 'enter passphrase' "${WORKDIR}/serial-shots.log" 2>/dev/null && break; sleep 3
 done
 python3 -I -c "import socket,sys,time;s=socket.socket(socket.AF_UNIX);s.connect(sys.argv[1]);time.sleep(1);s.sendall(sys.argv[2].encode()+b'\r');time.sleep(1)" "${ser}" "${PASSPHRASE}"
 

@@ -132,6 +132,31 @@ that moment and blocks every new USB device.
   hard for older users. That is why it stays off by default.
 - **Tested:** the boot test checks it is inactive by default.
 
+## 7b. Settings changed from the Welcome Center (polkit)
+
+Two Welcome Center pages (Phase 3) change system settings: printer discovery for the current
+network, and the DNS mode. They run the existing scripts through `pkexec`, with polkit actions
+in `/usr/share/polkit-1/actions/org.kiezel.settings.policy`:
+
+| Action | Script | Default for the active local user |
+|---|---|---|
+| `org.kiezel.printer-discovery` | `/usr/libexec/kiezel/printer-discovery` | `auth_admin_keep` |
+| `org.kiezel.dns-mode` | `/usr/libexec/kiezel/dns-mode` | `auth_admin_keep` |
+
+- **Why:** the prompt shows a plain-language Dutch or English message ("Om printers op dit
+  netwerk te laten vinden, typt u het wachtwoord van de beheerder"), not pkexec's generic
+  "run /usr/libexec/… as the super user".
+- **Risk:** none added; this is the same privilege `ujust` already needs. Remote and inactive
+  sessions are refused (`allow_any`/`allow_inactive` = `no`).
+- **Trade-off, open for the owner:** a non-admin daily account will need the administrator
+  password for these two pages. Allowing printer discovery without a password (`yes` for active
+  local users) would be easier, but would let anyone at the keyboard open the home zone.
+- **Reading state needs no root:** `printer-discovery status` reports both the configured zone and
+  the zone the firewall really applies; the page trusts the firewall's answer.
+- **Tested:** image checks verify the actions and that the DNS mode is readable without root. The
+  pages were exercised on screen in a VM: the prompt appeared, the firewall moved to
+  `kiezel-home` and back, and the DNS mode changed to `router` and back.
+
 ## 8. Security audit score
 
 Lynis (pinned 3.1.7, SHA-256 checked) runs in every boot test. The hardening index is printed

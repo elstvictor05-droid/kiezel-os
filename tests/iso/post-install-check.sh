@@ -60,7 +60,7 @@ log "== Kiezel post-install check  $(date -u +%FT%TZ)"
 # --- LUKS unlock over the serial console ---------------------------------------------------
 start=${SECONDS} typed=0
 while (( SECONDS - start < 600 )); do
-    if strings "${SERIAL}" 2>/dev/null | grep -qiE 'passphrase for|Please enter passphrase'; then
+    if grep -aqiE 'passphrase for|Please enter passphrase' "${SERIAL}" 2>/dev/null; then
         python3 -I - "${WORKDIR}/serial.sock" "${PASSPHRASE}" <<'PY'
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
@@ -101,11 +101,52 @@ se="$(ssh_vm getenforce 2>&1)"
 
 img="$(ssh_vm "bootc status --format json | jq -r '.status.booted.image.image.image'" 2>&1)"
 sigmode="$(ssh_vm "bootc status --format json | jq -c '.status.booted.image.image.signature'" 2>&1)"
-[[ "${img}" == "ghcr.io/elstvictor05-droid/kiezel:stable" ]] && pass "tracks ghcr.io/elstvictor05-droid/kiezel:stable (origin signature mode: ${sigmode})" \
-    || fail "tracks ghcr.io/elstvictor05-droid/kiezel:stable" "${img}"
+# EXPECT_IMAGE: only for tests/iso/local-fresh-install.sh (a local, unreleased image).
+want="${EXPECT_IMAGE:-ghcr.io/elstvictor05-droid/kiezel:stable}"
+[[ "${img}" == "${want}" ]] && pass "tracks ${want} (origin signature mode: ${sigmode})" \
+    || fail "tracks ${want}" "${img}"
 
+# Never test a stale image (owner requirement). EXPECT_COMMIT is the commit the installed image
+# must be built from: HEAD for tests/iso/local-fresh-install.sh, and for iso.yml the revision label
+# of :stable when the job started. Unset is a failure, not a skip.
+got_commit="$(ssh_vm 'cat /usr/share/kiezel/build-commit' 2>&1)"
+if [[ -z "${EXPECT_COMMIT:-}" ]]; then
+    fail "installed image built from the expected commit" "EXPECT_COMMIT not set (image says '${got_commit}')"
+elif [[ "${got_commit}" == "${EXPECT_COMMIT}" ]]; then
+    pass "installed image was built from ${EXPECT_COMMIT}"
+else
+    fail "installed image built from ${EXPECT_COMMIT}" "image says '${got_commit}'"
+fi
 pol="$(ssh_vm "jq -r '.transports.docker[\"ghcr.io/elstvictor05-droid/kiezel\"][0].type' /etc/containers/policy.json" 2>&1)"
 [[ "${pol}" == "sigstoreSigned" ]] && pass "installed trust policy requires Kiezel signatures" || fail "installed trust policy" "${pol}"
+# Administrator from the installer (owner decision 1a). The CI kickstart stands in for the helper
+# with user "beheerder" in wheel; root must be locked and no other regular account may exist yet
+# (Plasma Setup creates the daily account on first boot).
+adm="$(ssh_vm 'id -nG beheerder 2>&1 | tr " " ","; passwd -S root | cut -d" " -f2; getent passwd | awk -F: "\$3>=1000 && \$3<60000 {print \$1}" | xargs' 2>&1 | xargs)"
+if [[ "${adm}" =~ ^beheerder,wheel\ (L|LK)\ beheerder$ ]]; then
+    pass "installer created the administrator (beheerder in wheel); root locked; no daily account yet"
+else fail "administrator from the installer" "got '${adm}' (want: beheerder,wheel L beheerder)"; fi
+# Owner decision 6a: the administrator is hidden on the login screen. plasmalogin shows exactly
+# UID_MIN..UID_MAX from /etc/login.defs, so UID_MIN must be just past beheerder's uid.
+hid="$(ssh_vm 'echo "$(id -u beheerder) $(awk "\$1==\"UID_MIN\" {print \$2}" /etc/login.defs)"' 2>&1)"
+read -r a_uid uid_min <<<"${hid}"
+if [[ "${a_uid}" =~ ^[0-9]+$ && "${uid_min}" == "$((a_uid + 1))" ]]; then
+    pass "administrator hidden on the login screen (uid ${a_uid} < UID_MIN ${uid_min}); 'Other...' reaches it"
+else fail "administrator hidden on the login screen" "got '${hid}' (want: <uid> <uid+1>)"; fi
+# Image content, not installer behaviour: iso.yml installs the RELEASED :stable, which may predate
+# Phase 3. The check is skipped (INFO) ONLY for an image without any Phase 3 content. A Phase 3
+# image (it ships the "Goed leesbaar" setup page) or the local fresh-ISO run of a new image
+# (EXPECT_IMAGE) without the override FAILS: the override is what makes Plasma Setup create the
+# daily account at all once the installer has created the administrator.
+pse="$(ssh_vm 'grep -h PLASMA_SETUP_USER_CREATION_OVERRIDE /usr/lib/environment.d/60-kiezel-plasma-setup.conf 2>/dev/null; test -e /etc/plasma-setup-done && echo done || echo pending' 2>&1 | xargs)"
+phase3="$(ssh_vm 'test -d /usr/share/plasma/packages/org.kiezel.plasmasetup.accessibility && echo yes || echo no' 2>&1)"
+if [[ "${pse}" == "PLASMA_SETUP_USER_CREATION_OVERRIDE=1 pending" ]]; then
+    pass "Plasma Setup will still create the daily account (override set, setup pending)"
+elif [[ "${phase3}" == "no" && -z "${EXPECT_IMAGE:-}" ]]; then
+    log "INFO  installed image has no Phase 3 content (released :stable before Phase 3); daily-account override not expected"
+else
+    fail "Plasma Setup pending with account override" "got '${pse}' (Phase 3 image: ${phase3}, EXPECT_IMAGE: ${EXPECT_IMAGE:-unset})"
+fi
 
 out="$(ssh_vm "bootc switch ghcr.io/elstvictor05-droid/kiezel:ci-unsigned-bootable" 2>&1)"
 if [[ $? -ne 0 ]] && grep -qi signature <<<"${out}"; then pass "installed system refuses an UNSIGNED Kiezel image"
@@ -126,7 +167,7 @@ else
 fi
 
 admins="$(ssh_vm "getent group wheel | cut -d: -f4" 2>&1)"
-log "INFO  wheel members after install: '${admins}' (CI kickstart creates no user; Plasma Setup runs on first boot)"
+log "INFO  wheel members after install: '${admins}' (the CI kickstart creates the administrator; Plasma Setup makes the daily account on first boot)"
 ps="$(ssh_vm 'test -e /etc/plasma-setup-done && echo done || echo pending' 2>&1)"
 [[ "${ps}" == "pending" ]] && pass "Plasma Setup will run on first boot" || fail "Plasma Setup pending" "${ps}"
 

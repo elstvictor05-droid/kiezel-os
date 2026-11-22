@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- Kiezel settings that change the system, started from the Welcome Center pages or ujust.
+     Plain-language messages instead of pkexec's generic "run ... as the super user".
+     Default: an administrator password is needed (auth_admin_keep), see docs/hardening.md. -->
+<policyconfig>
+  <vendor>Kiezel</vendor>
+  <action id="org.kiezel.printer-discovery">
+    <description>Find printers on this home network</description>
+    <description xml:lang="nl">Printers zoeken op dit thuisnetwerk</description>
+    <message>To let this computer find printers on this network, enter the administrator password.</message>
+    <message xml:lang="nl">Om printers op dit netwerk te laten vinden, typt u het wachtwoord van de beheerder.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/kiezel/printer-discovery</annotate>
+  </action>
+  <action id="org.kiezel.dns-mode">
+    <description>Change who looks up web addresses</description>
+    <description xml:lang="nl">Kiezen wie webadressen opzoekt</description>
+    <message>To change who looks up web addresses (DNS), enter the administrator password.</message>
+    <message xml:lang="nl">Om te veranderen wie webadressen opzoekt (DNS), typt u het wachtwoord van de beheerder.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/kiezel/dns-mode</annotate>
+  </action>
+</policyconfig>

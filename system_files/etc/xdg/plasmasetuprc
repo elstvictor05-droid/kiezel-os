@@ -1,0 +1,10 @@
+# Kiezel: Plasma Setup configuration (ADR-0007, owner decision option a).
+#
+# The installer creates the ADMINISTRATOR (in "wheel"). Plasma Setup creates the DAILY account,
+# which must NOT be an administrator. Plasma Setup falls back to "wheel" when this value is empty,
+# so it is set explicitly to the harmless group "users" (no polkit rule or sudoers entry refers to
+# it; checked by tests/security/daily-account.sh). On ostree "users" lives in /usr/lib/group
+# (nss-altfiles), where usermod silently does not add members: the daily account then ends up in no
+# extra group at all, which is what matters. Verified in a VM.
+[Accounts]
+UserGroups=users

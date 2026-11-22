@@ -88,3 +88,208 @@ source and package findings. The on-screen run in a VM, with screenshots, is sti
   "System language detected as: nl_BE" → "Overriding to base language nl" → "Successfully set
   system default language" → `LANG=nl_NL.UTF-8`. Related upstream report: KDE bug 516378 (missing
   regional variants). Report text prepared for the owner to file (product "Plasma Setup").
+
+## Phase 3 implementation: the "Easy to read" page (2026-11-22)
+
+Point 3 of the decision applies: Plasma Setup has no text size option (scaling is commented out
+upstream), so Kiezel ships a **Plasma Setup module** (`org.kiezel.plasmasetup.accessibility`,
+QML only, `X-KDE-Weight: -10`, so it is the **first** page):
+
+| Choice | Options | Default | Applied by |
+|---|---|---|---|
+| Text size | Normal (10 pt), Large (13 pt), Extra large (16 pt) | **Large**, applied as soon as the page appears | `kdeglobals` font keys |
+| Colours | Normal (Breeze Light), High contrast (white on black, yellow focus) | Normal | `plasma-apply-colorscheme`; scheme `KiezelHighContrast` ships in the image |
+| Read aloud | big on/off button; Meta+Alt+S keeps working | Off | `orca.service` now; `kaccessrc` in the new account |
+
+How the choices reach the new account: Plasma Setup copies the setup session's `kdeglobals`
+and `kwinrc` to the account it creates (`setnewuserglobaltheme`, `setnewuserdisplayscaling` in
+its KAuth helper). Text size and colours are native `kdeglobals` keys, so they carry over as is.
+The screen reader lives in `kaccessrc`, which is not copied, so the page also records
+`[Kiezel] ScreenReader=true` in `kdeglobals`. The autostart entry
+`kiezel-a11y-first-login.desktop` applies it once in the new account. The page runs
+`/usr/libexec/kiezel/a11y-apply` through the plasma5support executable engine.
+
+Strings are bilingual (Dutch for `nl*` locales, English otherwise), so no translation catalogue
+is needed. The page comes before Plasma Setup's language page; the installer has already set the
+system language.
+
+Tests:
+
+- Image checks: the page is discovered by `kpackagetool6`, has the lowest weight, the executable
+  engine is present, and `a11y-apply` writes the expected keys.
+- `qmllint` is clean.
+
+### On-screen run (2026-11-22, installed CI-test disk, files added with `bootc usr-overlay`)
+
+![The Easy to read page as the first page of Plasma Setup](../user-guide/images/easy-to-read-default.png)
+![High contrast, applied live](../user-guide/images/easy-to-read-high-contrast.png)
+![The new account after its first login](../user-guide/images/first-login-high-contrast.png)
+
+What was checked, in order:
+
+1. The page is the **first** page, titled "Goed leesbaar". "Groot" is already applied when it
+   appears.
+2. "Extra groot" enlarges all text **live**, and the page scrolls when it no longer fits.
+3. "Voorlezen" starts Orca and speech-dispatcher in the setup session.
+4. "Hoog contrast" switches live; borders are white (measured on the screenshot).
+5. The following Plasma Setup pages (language, account, ...) keep extra-large text and high
+   contrast.
+6. After the account is created, its `kdeglobals` holds the text size, the colour scheme and
+   `[Kiezel] ScreenReader=true`.
+7. After the first login, the desktop is in high contrast with extra-large text, **Orca is
+   running**, `kaccessrc` has the screen reader enabled, and `FirstLoginApplied=true` is set.
+
+Three problems were found and fixed during this run:
+
+- **No live font update.** The legacy `KGlobalSettings.notifyChange` signal is ignored in Plasma 6.
+  The script now sends `org.kde.KDEPlatformTheme.refreshFonts`.
+- **Weak borders in high contrast.** They measured (51,51,51) on black, about 1.7:1, which fails
+  WCAG 1.4.11's 3:1. `plasma-apply-colorscheme` overwrites `[KDE] frameContrast` with the
+  scheme's value, so `frameContrast=1.0` now lives in the colour scheme itself.
+- **The screen reader choice would have been lost.** The first-login autostart also ran in Plasma
+  Setup's own session, marked itself done, and that mark was copied to the new account. It now
+  skips the `plasma-setup` user.
+
+Open items:
+
+- The **login screen** (plasmalogin greeter) still uses normal text and colours. It is
+  system-wide; making it follow the choice needs a privileged step. Phase 3 follow-up.
+- If Plasma Setup restarts mid-way, the page shows its defaults rather than the choices already
+  applied. Harmless on a real first boot.
+- The created account is still an **administrator** (`wheel`). The non-admin daily account is a
+  separate Phase 3 item.
+
+## Phase 3: Welcome Center pages (2026-11-22)
+
+Two Kiezel pages are added to Plasma Welcome
+(`/usr/share/plasma/plasma-welcome/extra-pages/`) after the first login:
+
+1. **"Heeft u een netwerkprinter thuis?"** One button opens printer discovery for **this
+   network only** (firewall zone `kiezel-home`), and one button undoes it. The page explains why
+   to do this only at home.
+2. **"Wie zoekt uw webadressen op?"** It shows the DNS privacy trade-off from ADR-0012 and
+   offers one switch: Quad9 (recommended) or the internet provider.
+
+Design rules learned on screen:
+
+- Plasma Welcome's page header (description plus `topContent`) **does not scroll**. With extra
+  large text, the buttons fell below the window and could not be reached. Both pages therefore
+  use an empty description and their own `ScrollView`, with the button right after one short
+  sentence and the longer explanation below it.
+- `GenericPage` is deprecated upstream; the pages use `Page`.
+- Changes go through `pkexec` with Kiezel polkit actions, so the password prompt states in plain
+  language what it is for (docs/hardening.md §7b).
+
+![Printer page](../user-guide/images/welcome-printer.png)
+![DNS privacy page](../user-guide/images/welcome-dns-privacy.png)
+
+## Owner decisions, Phase 3 (2026-11-22)
+
+### 1. Administrator from the installer, daily account without admin rights (option a)
+
+- **The installer creates the administrator.** The helper does this in Anaconda's User Creation
+  step, with "Make this user administrator" ticked. `iso/kiezel.ks` has **no `rootpw` line**: in
+  Anaconda any kickstart `rootpw`, even `--lock`, counts as an existing admin
+  (`pyanaconda/modules/users/users.py`, `check_admin_user_exists`: "any root set from kickstart is
+  fine"). With such a line the account step was skipped. The kickstart comment claimed the
+  installer asked for the admin, but in practice no admin was ever made (found while implementing
+  this decision). Without it, Anaconda cannot continue until an admin exists. `%post` locks root
+  whenever a `wheel` administrator exists. `tests/iso/check-kickstart.sh` fails a production
+  kickstart that contains `rootpw` or `user`.
+- **Plasma Setup creates the daily account.** It runs with `PLASMA_SETUP_USER_CREATION_OVERRIDE=1`
+  (`/usr/lib/environment.d/60-kiezel-plasma-setup.conf`), because it hides its account page once a
+  regular user exists. `/etc/xdg/plasmasetuprc` sets `UserGroups=users`; an empty value would fall
+  back to `wheel`. On ostree, `users` lives in `/usr/lib/group` (nss-altfiles) and `usermod` quietly
+  skips it, so the daily account ends up in no extra group at all. The account page's fixed text
+  "This user will be an administrator" is replaced at build time
+  (`build/45-plasma-setup-account.sh`); the build fails if upstream changes that text.
+- **Tests: the daily account can never get admin rights.**
+  - `tests/security/daily-account.sh` (CI, every build) checks:
+    - Plasma Setup's groups contain no admin group;
+    - no sudoers rule applies;
+    - **every polkit rule and action** of the image, evaluated for the daily account in an
+      active local session (`polkit-daily-account.js`): no action that needs an admin by default
+      may be granted by a rule, except the reviewed rpm-ostree `upgrade`/`repo-refresh` (updates
+      to the same signed image); 15 core admin actions must need an admin.
+  - Negative check: the same evaluator FAILS for a user in `wheel` or `empower`, and for the
+    upstream default `UserGroups=wheel`.
+  - Boot test: an account created exactly as Plasma Setup does cannot use sudo, pkexec, run0 or
+    systemctl.
+  - Post-install test: `beheerder` is in `wheel`, root is locked, there is no other account yet,
+    and Plasma Setup is pending with the override.
+- **Helper sheet:** `docs/user-guide/helper-sheet.md`, a printable page for the administrator
+  password and the LUKS passphrase, on paper only.
+
+### 2. Printer page keeps the administrator password
+
+The polkit default stays `auth_admin_keep` (docs/hardening.md §7b).
+
+### 3. Login screen: large text for everyone, without privileged code
+
+A drop-in for the greeter's own user unit (`plasma-login.service.d/50-kiezel-large-text.conf`)
+points `XDG_CONFIG_DIRS` at `/usr/share/kiezel/login-screen/xdg`, whose `kdeglobals` sets 13 pt
+text. Only the greeter reads it; user sessions are unaffected. Everything ships in `/usr`, so there
+is no service and nothing in `/var`.
+
+Checked on screen in a VM: the date, name and buttons are about 28% larger, matching 13/10 pt.
+Because this suffices, the privileged service (enum values, `O_NOFOLLOW`, fixed target, SELinux
+domain, malicious-input test) was **not built**. A login screen synced from System Settings
+(`/var/lib/plasmalogin/.config/kdeglobals`) still takes precedence.
+
+**Not final yet (owner, 2026-11-22):** 28% larger is a measurement, not a verdict. The two older
+testers judge the login screen before this is final: can they read their name, the password field
+and the buttons without leaning in, at their usual distance? Task L1 in
+`tests/usability/tasks.md`. If it is not enough, the next step is a larger size in the same
+`/usr` file, still without privileged code.
+
+### 6a. Administrator hidden on the login screen (owner, 2026-11-22)
+
+The login screen shows only the everyday account, so the user can never pick the administrator
+by mistake. plasmalogin lists exactly the accounts with `UID_MIN <= uid <= UID_MAX` from
+`/etc/login.defs` and has no other filter (plasma-login-manager 6.8, `UserModel::populate`). The
+kickstart's `%post` therefore sets `UID_MIN` to the highest administrator uid + 1 (normally 1001).
+New accounts, like the daily one from Plasma Setup, get uids from there on and stay visible. The
+helper logs in through **Other…** and types the name (helper sheet, section 2).
+
+- Tested: `tests/iso/check-kickstart.sh` fails without the `%post` step, and
+  `tests/iso/post-install-check.sh` checks that `UID_MIN` is `uid(beheerder) + 1`.
+- Side effect, accepted: tools that read `UID_MIN` as the start of "human" accounts treat the
+  administrator as a system account. polkit is not affected, because it asks for members of
+  `wheel`, not a uid range.
+
+### Fresh-ISO run of the whole flow (2026-11-22)
+
+`tests/iso/local-fresh-install.sh` installs a local, unreleased image from a fresh CI-test ISO
+through the real release path. It uses a local registry, signs through `ci/sign.sh` with a
+throw-away test key, and the installer trusts only that key. This lets a change be tested before
+merging; GHCR only has merged images.
+
+- **First attempt:** the installer **refused** the image: `Signature for identity
+  "127.0.0.1:5077/kiezel" is not accepted`. The VM pulls the image as `10.0.2.2`, and
+  `matchRepository` compares the name it pulls with the name that was signed. Signature
+  enforcement behaved correctly; the test setup was wrong. It now signs for the name the VM uses
+  (`KIEZEL_TEST_SIGN_IDENTITY`, honoured only by `ci/sign.sh --test`).
+- **Post-install:** every check passed. `beheerder` is in `wheel`, root is locked, there is no
+  daily account yet, Plasma Setup is pending with the override, LUKS2, Secure Boot, SELinux,
+  signature enforcement and `nl_BE` all check out.
+- **On screen:**
+  1. Plasma Setup started although an administrator existed.
+  2. The "Goed leesbaar" page came first, with Large applied.
+  3. The account page read "Dit wordt uw dagelijkse account, zonder beheerdersrechten."
+  4. The daily account `testgebruiker` was created in **no extra group**.
+  5. `sudo -l -U testgebruiker` gives "not allowed to run sudo"; `beheerder` gives `(ALL) ALL`.
+  6. The login screen showed both accounts in large text.
+  7. Logged in as the daily account, the printer page asked for **Beheerder's** password.
+  8. `pkcheck` against the daily account's **real active session** returned `auth_admin_keep`
+     for systemd units, rebase, package install, Flatpak app install, user administration and
+     the Kiezel actions, and `yes` only for rpm-ostree `upgrade`. This matches the evaluator
+     exactly.
+- **Note:** `sudo -n true` says "a password is required" for any account, admin or not; sudo asks
+  for authentication before it looks at the rules. The tests use `sudo -l -U`, which is decisive.
+- **Usability finding:** the login screen preselects "Beheerder" (the first account) until the
+  daily account has logged in once. After that, plasmalogin remembers the last user. Resolved by
+  owner decision 6a (administrator hidden).
+
+![Account page](../user-guide/images/daily-account-page.png)
+![Login screen](../user-guide/images/login-screen-large-text.png)
+![Daily account asked for the administrator's password](../user-guide/images/daily-account-admin-prompt.png)

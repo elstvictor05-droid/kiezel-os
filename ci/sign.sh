@@ -20,6 +20,9 @@ key="$1" ref="$2" mode="${3:-release}"
 extra=()
 if [[ "${mode}" == "--test" ]]; then
     extra=(--tlog-upload=false --allow-http-registry)
+    # Local tests only: the registry is pushed to as 127.0.0.1 but a VM pulls it as 10.0.2.2, and
+    # devices check that the signed identity matches (matchRepository). Never honoured for releases.
+    [[ -n "${KIEZEL_TEST_SIGN_IDENTITY:-}" ]] && extra+=(--sign-container-identity "${KIEZEL_TEST_SIGN_IDENTITY}")
 fi
 
 cosign sign --yes \

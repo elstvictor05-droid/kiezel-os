@@ -1,0 +1,18 @@
+[Unit]
+Description=Kiezel: install the curated apps (Flatpak preinstall from Flathub)
+Documentation=https://github.com/elstvictor05-droid/kiezel-os/blob/main/docs/adr/0011-firefox-rpm-or-flatpak.md
+Wants=network-online.target
+After=network-online.target
+# Retried until it succeeds (no network yet, Flathub busy); no start limit for the retries.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flatpak preinstall --system -y --noninteractive
+Restart=on-failure
+RestartSec=2min
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

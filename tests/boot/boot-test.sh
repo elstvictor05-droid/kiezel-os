@@ -123,6 +123,18 @@ if ! wait_ssh 900; then
 fi
 pass "VM booted and reachable"
 
+# Never test a stale image (owner requirement): the system that booted must be built from the
+# commit under test. The image writes its KIEZEL_COMMIT there (build/build.sh, ci/build-commit.sh).
+want_commit="$(git -C "${HERE}" rev-parse HEAD)"
+got_commit="$(ssh_vm 'cat /usr/share/kiezel/build-commit' 2>&1)"
+if [[ "${got_commit}" == "${want_commit}" ]]; then
+    pass "booted image was built from HEAD ${want_commit}"
+else
+    fail "booted image was built from HEAD ${want_commit}" "image says '${got_commit}'; rebuild the image and the disk from a clean work tree"
+    log "RESULT: stale image; the remaining checks would not test this commit"
+    exit 1
+fi
+
 # --- Checks on the running system --------------------------------------------------
 state="$(ssh_vm 'systemctl is-system-running --wait' 2>/dev/null)"
 if [[ "${state}" == "running" ]]; then pass "system state: running"
@@ -288,6 +300,22 @@ pz="$(ssh_vm 'firewall-cmd --zone=kiezel --query-service=mdns; /usr/libexec/kiez
 # Services.
 svc="$(ssh_vm 'systemctl is-active sshd.service; systemctl is-enabled fwupd-refresh.timer; systemctl is-active usbguard.service' 2>&1 | xargs)"
 [[ "${svc}" == "inactive enabled inactive" ]] && pass "sshd off, fwupd refresh on, USBGuard off by default" || fail "service baseline" "${svc}"
+# Daily account (owner decision 1a): created exactly as Plasma Setup does (useradd + the groups from
+# /etc/xdg/plasmasetuprc), then every route to root is tried as that account. The polkit rules for
+# an active local session are evaluated separately (tests/security/daily-account.sh).
+daily="$(ssh_vm 'g=$(sed -n "s/^UserGroups=//p" /etc/xdg/plasmasetuprc); useradd -m kzdaily && usermod -a -G "$g" kzdaily
+        echo "groups=$(id -nG kzdaily | tr " " ",")"
+        LANG=C sudo -l -U kzdaily 2>&1 | grep -q "is not allowed to run sudo" && echo sudo=denied || echo sudo=ROOT
+        runuser -u kzdaily -- pkexec --disable-internal-agent true >/dev/null 2>&1 && echo pkexec=ROOT || echo pkexec=denied
+        runuser -u kzdaily -- run0 --no-ask-password true >/dev/null 2>&1 && echo run0=ROOT || echo run0=denied
+        runuser -u kzdaily -- systemctl --no-ask-password start kiezel-dns-route.service >/dev/null 2>&1 && echo systemctl=ROOT || echo systemctl=denied
+        userdel -r kzdaily' 2>&1 | xargs)"
+# Note: on ostree, "users" lives in /usr/lib/group (nss-altfiles) and usermod silently leaves it out;
+# the account then has no extra group at all, which is fine. Only admin groups matter here.
+if [[ "${daily}" =~ sudo=denied\ pkexec=denied\ run0=denied\ systemctl=denied ]] \
+   && ! grep -qE 'groups=[^ ]*(wheel|empower)' <<<"${daily}"; then
+    pass "daily account (Plasma Setup groups): not in wheel; sudo, pkexec, run0 and systemctl all refused"
+else fail "daily account must not reach root" "${daily}"; fi
 
 # Container trust (ADR-0004): root/system cannot pull unsigned images from other registries...
 out="$(ssh_vm 'podman pull -q quay.io/libpod/alpine:latest' 2>&1)"
@@ -305,9 +333,38 @@ ssh_vm "runuser -l ciuser -c '/usr/libexec/kiezel/container-registries close'" >
 # Flatpak/Firefox sandbox still works with the hardening (user namespaces + seccomp).
 bw="$(ssh_vm "runuser -l ciuser -c 'bwrap --unshare-all --share-net --die-with-parent --ro-bind / / --proc /proc --dev /dev true && echo ok'" 2>&1)"
 [[ "${bw}" == "ok" ]] && pass "unprivileged sandbox (bubblewrap, as used by Flatpak) works" || fail "bubblewrap sandbox works" "${bw:0:200}"
-fx="$(ssh_vm "runuser -l ciuser -c 'P=\$(mktemp -d); timeout 120 firefox --headless --no-remote --profile \$P about:blank >/dev/null 2>&1 & sleep 90; ls \$P/extensions/ 2>/dev/null; kill %1 2>/dev/null; true'" 2>&1)"
-if grep -q 'uBlock0@raymondhill.net' <<<"${fx}"; then pass "Firefox starts (content sandbox) and the policy installed uBlock Origin"
-else fail "Firefox starts and policy installs uBlock Origin" "extensions: ${fx:0:160}"; fi
+# Curated apps (ADR-0011): kiezel-flatpak-preinstall.service installs them from Flathub at first
+# boot. Wait for the SERVICE (max 15 min), not for the apps: as soon as it has finished, the
+# installed app ids must equal config.yaml's default profile. A missing or extra app (e.g. an
+# end-of-life rename) fails at once, with the service journal in the report.
+want_apps="$(python3 -c '
+import sys, yaml
+c = yaml.safe_load(open(sys.argv[1])); o = ["simple", "standard", "advanced"]; p = c["profile"]["default"]
+print(" ".join(sorted(a for q in o[:o.index(p) + 1] for a in (c["apps"][q] or []))))' "${HERE}/../../config.yaml" 2>&1)"
+pre="$(ssh_vm 'for _ in $(seq 180); do
+            st=$(systemctl show -p ActiveState --value kiezel-flatpak-preinstall.service)
+            res=$(systemctl show -p Result --value kiezel-flatpak-preinstall.service)
+            ran=$(systemctl show -p ExecMainExitTimestampMonotonic --value kiezel-flatpak-preinstall.service)
+            [[ "${st}" == inactive && "${res}" == success && "${ran:-0}" != 0 ]] && break
+            [[ "${st}" == failed ]] && break
+            sleep 5
+        done
+        echo "state=${st} result=${res} after=${SECONDS}s"
+        echo "have=$(flatpak list --system --app --columns=application | LC_ALL=C sort | xargs)"' 2>&1)"
+have_apps="$(sed -n 's/^have=//p' <<<"${pre}")"
+svc="$(head -1 <<<"${pre}")"
+if [[ "${svc}" == "state=inactive result=success"* && "${have_apps}" == "${want_apps}" ]]; then
+    pass "curated apps preinstalled from Flathub; installed ids equal config.yaml (${want_apps}; ${svc##* })"
+else
+    fail "curated apps: installed ids equal config.yaml" "want=[${want_apps}] have=[${have_apps}] ${svc}"
+    { echo "--- kiezel-flatpak-preinstall journal"
+      ssh_vm 'journalctl -b -u kiezel-flatpak-preinstall --no-pager -o short-monotonic | tail -60' 2>&1; } >> "${REPORT}"
+fi
+# Firefox (Flatpak) with a fresh profile: the Kiezel policies must reach the sandbox and install
+# uBlock Origin. The profile lives in the app's own data directory (the sandbox has a private /tmp).
+fx="$(ssh_vm "runuser -l ciuser -c 'P=\$HOME/.var/app/org.mozilla.firefox/ci-profile; mkdir -p \$P; timeout 120 flatpak run org.mozilla.firefox --headless --no-remote --profile \$P about:blank >/dev/null 2>&1 & sleep 90; ls \$P/extensions/ 2>/dev/null; flatpak kill org.mozilla.firefox 2>/dev/null; true'" 2>&1)"
+if grep -q 'uBlock0@raymondhill.net' <<<"${fx}"; then pass "Firefox (Flatpak) starts and the Kiezel policy installed uBlock Origin"
+else fail "Firefox (Flatpak) starts and policy installs uBlock Origin" "extensions: ${fx:0:160}"; fi
 
 # Lynis score (report only; the trend is tracked, not gated).
 if [[ -f "${LYNIS_TARBALL:-}" ]]; then

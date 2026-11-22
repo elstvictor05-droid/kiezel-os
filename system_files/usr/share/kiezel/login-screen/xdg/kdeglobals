@@ -1,0 +1,9 @@
+# Kiezel: the login screen (plasmalogin greeter) uses large text for everyone (Phase 3, owner
+# decision: no privileged code). Only the greeter reads this directory, through
+# /usr/lib/systemd/user/plasma-login.service.d/50-kiezel-large-text.conf. A login screen synced from
+# System Settings (/var/lib/plasmalogin/.config/kdeglobals) takes precedence, as usual.
+[General]
+font=Noto Sans,13,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+menuFont=Noto Sans,13,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+toolBarFont=Noto Sans,13,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+smallestReadableFont=Noto Sans,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
