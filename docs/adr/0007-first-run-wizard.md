@@ -182,3 +182,56 @@ Design rules learned on screen:
 
 ![Printer page](../user-guide/images/welcome-printer.png)
 ![DNS privacy page](../user-guide/images/welcome-dns-privacy.png)
+
+## Owner decisions, Phase 3 (2026-11-22)
+
+### 1. Administrator from the installer, daily account without admin rights (option a)
+
+- **The installer creates the administrator.** The helper does this in Anaconda's User Creation
+  step, with "Make this user administrator" ticked. `iso/kiezel.ks` has **no `rootpw` line**: in
+  Anaconda any kickstart `rootpw`, even `--lock`, counts as an existing admin
+  (`pyanaconda/modules/users/users.py`, `check_admin_user_exists`: "any root set from kickstart is
+  fine"). With such a line the account step was skipped. The kickstart comment claimed the
+  installer asked for the admin, but in practice no admin was ever made (found while implementing
+  this decision). Without it, Anaconda cannot continue until an admin exists. `%post` locks root
+  whenever a `wheel` administrator exists. `tests/iso/check-kickstart.sh` fails a production
+  kickstart that contains `rootpw` or `user`.
+- **Plasma Setup creates the daily account.** It runs with `PLASMA_SETUP_USER_CREATION_OVERRIDE=1`
+  (`/usr/lib/environment.d/60-kiezel-plasma-setup.conf`), because it hides its account page once a
+  regular user exists. `/etc/xdg/plasmasetuprc` sets `UserGroups=users`; an empty value would fall
+  back to `wheel`. On ostree, `users` lives in `/usr/lib/group` (nss-altfiles) and `usermod` quietly
+  skips it, so the daily account ends up in no extra group at all. The account page's fixed text
+  "This user will be an administrator" is replaced at build time
+  (`build/45-plasma-setup-account.sh`); the build fails if upstream changes that text.
+- **Tests: the daily account can never get admin rights.**
+  - `tests/security/daily-account.sh` (CI, every build) checks:
+    - Plasma Setup's groups contain no admin group;
+    - no sudoers rule applies;
+    - **every polkit rule and action** of the image, evaluated for the daily account in an
+      active local session (`polkit-daily-account.js`): no action that needs an admin by default
+      may be granted by a rule, except the reviewed rpm-ostree `upgrade`/`repo-refresh` (updates
+      to the same signed image); 15 core admin actions must need an admin.
+  - Negative check: the same evaluator FAILS for a user in `wheel` or `empower`, and for the
+    upstream default `UserGroups=wheel`.
+  - Boot test: an account created exactly as Plasma Setup does cannot use sudo, pkexec, run0 or
+    systemctl.
+  - Post-install test: `beheerder` is in `wheel`, root is locked, there is no other account yet,
+    and Plasma Setup is pending with the override.
+- **Helper sheet:** `docs/user-guide/helper-sheet.md`, a printable page for the administrator
+  password and the LUKS passphrase, on paper only.
+
+### 2. Printer page keeps the administrator password
+
+The polkit default stays `auth_admin_keep` (docs/hardening.md §7b).
+
+### 3. Login screen: large text for everyone, without privileged code
+
+A drop-in for the greeter's own user unit (`plasma-login.service.d/50-kiezel-large-text.conf`)
+points `XDG_CONFIG_DIRS` at `/usr/share/kiezel/login-screen/xdg`, whose `kdeglobals` sets 13 pt
+text. Only the greeter reads it; user sessions are unaffected. Everything ships in `/usr`, so there
+is no service and nothing in `/var`.
+
+Checked on screen in a VM: the date, name and buttons are about 28% larger, matching 13/10 pt.
+Because this suffices, the privileged service (enum values, `O_NOFOLLOW`, fixed target, SELinux
+domain, malicious-input test) was **not built**. A login screen synced from System Settings
+(`/var/lib/plasmalogin/.config/kdeglobals`) still takes precedence.

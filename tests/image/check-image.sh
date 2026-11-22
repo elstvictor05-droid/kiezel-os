@@ -107,6 +107,18 @@ check "a11y-apply writes text size and screen reader choice into kdeglobals" \
              HOME=$h XDG_CONFIG_HOME=$h/.config /usr/libexec/kiezel/a11y-apply reader on >/dev/null 2>&1;
              grep -q "^font=Noto Sans,16," $h/.config/kdeglobals && grep -q "^ScreenReader=true" $h/.config/kdeglobals && grep -q "^Enabled=true" $h/.config/kaccessrc'
 
+# --- Administrator vs. daily account (ADR-0007, owner decision 1a) ----------------------
+check "Plasma Setup makes the daily account without wheel (UserGroups set, no wheel)" \
+    bash -c 'g=$(sed -n "s/^UserGroups=//p" /etc/xdg/plasmasetuprc); [[ -n "$g" && ",$g," != *",wheel,"* ]]'
+check "Plasma Setup shows its account page although the installer made an administrator" \
+    grep -qx 'PLASMA_SETUP_USER_CREATION_OVERRIDE=1' /usr/lib/environment.d/60-kiezel-plasma-setup.conf
+check "account page no longer claims the daily user is an administrator" \
+    bash -c 'q=/usr/share/plasma/packages/org.kde.plasmasetup.account/contents/ui/main.qml;
+             grep -q "zonder beheerdersrechten" "$q" && ! grep -q "This user will be an administrator" "$q"'
+check "login screen uses large text for everyone (greeter-only drop-in, no privileged code)" \
+    bash -c 'grep -q "XDG_CONFIG_DIRS=/usr/share/kiezel/login-screen/xdg:/etc/xdg" /usr/lib/systemd/user/plasma-login.service.d/50-kiezel-large-text.conf &&
+             grep -q "^font=Noto Sans,13," /usr/share/kiezel/login-screen/xdg/kdeglobals'
+
 # --- Welcome Center pages: printer at home, DNS privacy (Phase 3) -------------------
 check "Welcome Center: printer and DNS privacy pages installed" \
     test -s /usr/share/plasma/plasma-welcome/extra-pages/01-KiezelPrinter.qml -a -s /usr/share/plasma/plasma-welcome/extra-pages/02-KiezelDnsPrivacy.qml
