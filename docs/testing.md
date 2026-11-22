@@ -20,7 +20,7 @@ Requirements on the host: `podman qemu-system-x86 ovmf swtpm`, and your user in 
 
 ```bash
 # 1. Build the image (rootless works)
-podman build -t localhost/kiezel:dev .
+podman build --build-arg KIEZEL_COMMIT="$(ci/build-commit.sh)" -t localhost/kiezel:dev .
 
 # 2. Static checks
 podman run --rm -v ./tests/image:/t:ro,z localhost/kiezel:dev /t/check-image.sh

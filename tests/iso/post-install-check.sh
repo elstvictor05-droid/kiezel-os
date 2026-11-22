@@ -104,6 +104,17 @@ sigmode="$(ssh_vm "bootc status --format json | jq -c '.status.booted.image.imag
 [[ "${img}" == "ghcr.io/elstvictor05-droid/kiezel:stable" ]] && pass "tracks ghcr.io/elstvictor05-droid/kiezel:stable (origin signature mode: ${sigmode})" \
     || fail "tracks ghcr.io/elstvictor05-droid/kiezel:stable" "${img}"
 
+# Never test a stale image (owner requirement). EXPECT_COMMIT is the commit the installed image
+# must be built from: HEAD for tests/iso/local-fresh-install.sh, and for iso.yml the revision label
+# of :stable when the job started. Unset is a failure, not a skip.
+got_commit="$(ssh_vm 'cat /usr/share/kiezel/build-commit' 2>&1)"
+if [[ -z "${EXPECT_COMMIT:-}" ]]; then
+    fail "installed image built from the expected commit" "EXPECT_COMMIT not set (image says '${got_commit}')"
+elif [[ "${got_commit}" == "${EXPECT_COMMIT}" ]]; then
+    pass "installed image was built from ${EXPECT_COMMIT}"
+else
+    fail "installed image built from ${EXPECT_COMMIT}" "image says '${got_commit}'"
+fi
 pol="$(ssh_vm "jq -r '.transports.docker[\"ghcr.io/elstvictor05-droid/kiezel\"][0].type' /etc/containers/policy.json" 2>&1)"
 [[ "${pol}" == "sigstoreSigned" ]] && pass "installed trust policy requires Kiezel signatures" || fail "installed trust policy" "${pol}"
 

@@ -123,6 +123,18 @@ if ! wait_ssh 900; then
 fi
 pass "VM booted and reachable"
 
+# Never test a stale image (owner requirement): the system that booted must be built from the
+# commit under test. The image writes its KIEZEL_COMMIT there (build/build.sh, ci/build-commit.sh).
+want_commit="$(git -C "${HERE}" rev-parse HEAD)"
+got_commit="$(ssh_vm 'cat /usr/share/kiezel/build-commit' 2>&1)"
+if [[ "${got_commit}" == "${want_commit}" ]]; then
+    pass "booted image was built from HEAD ${want_commit}"
+else
+    fail "booted image was built from HEAD ${want_commit}" "image says '${got_commit}'; rebuild the image and the disk from a clean work tree"
+    log "RESULT: stale image; the remaining checks would not test this commit"
+    exit 1
+fi
+
 # --- Checks on the running system --------------------------------------------------
 state="$(ssh_vm 'systemctl is-system-running --wait' 2>/dev/null)"
 if [[ "${state}" == "running" ]]; then pass "system state: running"
