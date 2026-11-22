@@ -60,7 +60,7 @@ log "== Kiezel post-install check  $(date -u +%FT%TZ)"
 # --- LUKS unlock over the serial console ---------------------------------------------------
 start=${SECONDS} typed=0
 while (( SECONDS - start < 600 )); do
-    if strings "${SERIAL}" 2>/dev/null | grep -qiE 'passphrase for|Please enter passphrase'; then
+    if grep -aqiE 'passphrase for|Please enter passphrase' "${SERIAL}" 2>/dev/null; then
         python3 -I - "${WORKDIR}/serial.sock" "${PASSPHRASE}" <<'PY'
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
