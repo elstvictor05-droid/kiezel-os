@@ -305,7 +305,7 @@ svc="$(ssh_vm 'systemctl is-active sshd.service; systemctl is-enabled fwupd-refr
 # an active local session are evaluated separately (tests/security/daily-account.sh).
 daily="$(ssh_vm 'g=$(sed -n "s/^UserGroups=//p" /etc/xdg/plasmasetuprc); useradd -m kzdaily && usermod -a -G "$g" kzdaily
         echo "groups=$(id -nG kzdaily | tr " " ",")"
-        runuser -u kzdaily -- sudo -n true >/dev/null 2>&1 && echo sudo=ROOT || echo sudo=denied
+        LANG=C sudo -l -U kzdaily 2>&1 | grep -q "is not allowed to run sudo" && echo sudo=denied || echo sudo=ROOT
         runuser -u kzdaily -- pkexec --disable-internal-agent true >/dev/null 2>&1 && echo pkexec=ROOT || echo pkexec=denied
         runuser -u kzdaily -- run0 --no-ask-password true >/dev/null 2>&1 && echo run0=ROOT || echo run0=denied
         runuser -u kzdaily -- systemctl --no-ask-password start kiezel-dns-route.service >/dev/null 2>&1 && echo systemctl=ROOT || echo systemctl=denied

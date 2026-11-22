@@ -235,3 +235,39 @@ Checked on screen in a VM: the date, name and buttons are about 28% larger, matc
 Because this suffices, the privileged service (enum values, `O_NOFOLLOW`, fixed target, SELinux
 domain, malicious-input test) was **not built**. A login screen synced from System Settings
 (`/var/lib/plasmalogin/.config/kdeglobals`) still takes precedence.
+
+### Fresh-ISO run of the whole flow (2026-11-22)
+
+`tests/iso/local-fresh-install.sh` installs a local, unreleased image from a fresh CI-test ISO
+through the real release path. It uses a local registry, signs through `ci/sign.sh` with a
+throw-away test key, and the installer trusts only that key. This lets a change be tested before
+merging; GHCR only has merged images.
+
+- **First attempt:** the installer **refused** the image: `Signature for identity
+  "127.0.0.1:5077/kiezel" is not accepted`. The VM pulls the image as `10.0.2.2`, and
+  `matchRepository` compares the name it pulls with the name that was signed. Signature
+  enforcement behaved correctly; the test setup was wrong. It now signs for the name the VM uses
+  (`KIEZEL_TEST_SIGN_IDENTITY`, honoured only by `ci/sign.sh --test`).
+- **Post-install:** every check passed. `beheerder` is in `wheel`, root is locked, there is no
+  daily account yet, Plasma Setup is pending with the override, LUKS2, Secure Boot, SELinux,
+  signature enforcement and `nl_BE` all check out.
+- **On screen:**
+  1. Plasma Setup started although an administrator existed.
+  2. The "Goed leesbaar" page came first, with Large applied.
+  3. The account page read "Dit wordt uw dagelijkse account, zonder beheerdersrechten."
+  4. The daily account `testgebruiker` was created in **no extra group**.
+  5. `sudo -l -U testgebruiker` gives "not allowed to run sudo"; `beheerder` gives `(ALL) ALL`.
+  6. The login screen showed both accounts in large text.
+  7. Logged in as the daily account, the printer page asked for **Beheerder's** password.
+  8. `pkcheck` against the daily account's **real active session** returned `auth_admin_keep`
+     for systemd units, rebase, package install, Flatpak app install, user administration and
+     the Kiezel actions, and `yes` only for rpm-ostree `upgrade`. This matches the evaluator
+     exactly.
+- **Note:** `sudo -n true` says "a password is required" for any account, admin or not; sudo asks
+  for authentication before it looks at the rules. The tests use `sudo -l -U`, which is decisive.
+- **Usability finding:** the login screen preselects "Beheerder" (the first account) until the
+  daily account has logged in once. After that, plasmalogin remembers the last user.
+
+![Account page](../user-guide/images/daily-account-page.png)
+![Login screen](../user-guide/images/login-screen-large-text.png)
+![Daily account asked for the administrator's password](../user-guide/images/daily-account-admin-prompt.png)
