@@ -101,8 +101,10 @@ se="$(ssh_vm getenforce 2>&1)"
 
 img="$(ssh_vm "bootc status --format json | jq -r '.status.booted.image.image.image'" 2>&1)"
 sigmode="$(ssh_vm "bootc status --format json | jq -c '.status.booted.image.image.signature'" 2>&1)"
-[[ "${img}" == "ghcr.io/elstvictor05-droid/kiezel:stable" ]] && pass "tracks ghcr.io/elstvictor05-droid/kiezel:stable (origin signature mode: ${sigmode})" \
-    || fail "tracks ghcr.io/elstvictor05-droid/kiezel:stable" "${img}"
+# EXPECT_IMAGE: only for tests/iso/local-fresh-install.sh (a local, unreleased image).
+want="${EXPECT_IMAGE:-ghcr.io/elstvictor05-droid/kiezel:stable}"
+[[ "${img}" == "${want}" ]] && pass "tracks ${want} (origin signature mode: ${sigmode})" \
+    || fail "tracks ${want}" "${img}"
 
 # Never test a stale image (owner requirement). EXPECT_COMMIT is the commit the installed image
 # must be built from: HEAD for tests/iso/local-fresh-install.sh, and for iso.yml the revision label
@@ -147,7 +149,7 @@ else
 fi
 
 admins="$(ssh_vm "getent group wheel | cut -d: -f4" 2>&1)"
-log "INFO  wheel members after install: '${admins}' (CI kickstart creates no user; Plasma Setup runs on first boot)"
+log "INFO  wheel members after install: '${admins}' (the CI kickstart creates the administrator; Plasma Setup makes the daily account on first boot)"
 ps="$(ssh_vm 'test -e /etc/plasma-setup-done && echo done || echo pending' 2>&1)"
 [[ "${ps}" == "pending" ]] && pass "Plasma Setup will run on first boot" || fail "Plasma Setup pending" "${ps}"
 

@@ -8,16 +8,22 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-TEST=0 IMAGE_REF="ghcr.io/elstvictor05-droid/kiezel:stable" TEST_PUBKEY=""
+TEST=0 IMAGE_REF="ghcr.io/elstvictor05-droid/kiezel:stable" TEST_PUBKEY="" TRUST_KEY="" INSECURE_REGISTRY=""
 while [[ $# -gt 1 ]]; do
     case "$1" in
         --test) TEST=1; shift ;;
         --test-pubkey) TEST_PUBKEY="$2"; shift 2 ;;
         --image) IMAGE_REF="$2"; shift 2 ;;
+        # Local pre-merge testing only (tests/iso/local-fresh-install.sh); refused without --test:
+        --test-trust-key) TRUST_KEY="$2"; shift 2 ;;            # installer trusts this key instead
+        --test-insecure-registry) INSECURE_REGISTRY="$2"; shift 2 ;;   # plain-HTTP local registry
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 OUT="${1:?outdir required}"
+if [[ ${TEST} -eq 0 && ( -n "${TRUST_KEY}" || -n "${INSECURE_REGISTRY}" ) ]]; then
+    echo "--test-trust-key/--test-insecure-registry are only allowed with --test" >&2; exit 2
+fi
 mkdir -p "${OUT}"
 
 FEDORA=45
@@ -41,8 +47,12 @@ echo "${NETINST_SHA256}  ${CACHE}/${NETINST}" | sha256sum -c -
 
 # --- 2. Render the kickstart --------------------------------------------------------------
 KS="${OUT}/kiezel.ks"
-repo="${IMAGE_REF%%[:@]*}"
-python3 - "${IMAGE_REF}" "${repo}" system_files/usr/share/pki/containers/kiezel.pub iso/kiezel.ks "${KS}" <<'PY'
+# Repository = reference without digest, and without a tag after the last "/" (a registry port
+# such as host:5000 is not a tag).
+repo="${IMAGE_REF%@*}"; last="${repo##*/}"; [[ "${last}" == *:* ]] && repo="${repo%:*}"
+pubkey=system_files/usr/share/pki/containers/kiezel.pub
+[[ -n "${TRUST_KEY}" ]] && pubkey="${TRUST_KEY}"
+python3 - "${IMAGE_REF}" "${repo}" "${pubkey}" iso/kiezel.ks "${KS}" <<'PY'
 import sys
 image, repo, pubkey, src, dst = sys.argv[1:]
 ks = open(src).read()
@@ -55,9 +65,9 @@ PY
 if [[ ${TEST} -eq 1 ]]; then
     [[ -f "${TEST_PUBKEY}" ]] || { echo "--test needs --test-pubkey" >&2; exit 2; }
     # Plain string edits in Python: an SSH key may contain '/', '+' or '&', which break sed.
-    python3 -I - "${KS}" "${TEST_PUBKEY}" <<'PY'
+    python3 -I - "${KS}" "${TEST_PUBKEY}" "${INSECURE_REGISTRY}" <<'PY'
 import sys
-ks_path, pub_path = sys.argv[1], sys.argv[2]
+ks_path, pub_path, insecure = sys.argv[1], sys.argv[2], sys.argv[3]
 pub = open(pub_path).read().strip()
 lines = open(ks_path).read().splitlines()
 out = ["# !!! CI TEST KICKSTART: fixed passphrase and SSH key. Never publish. !!!"]
@@ -71,6 +81,10 @@ for line in lines:
         # (wheel, fixed test password) and root's SSH key for the tests (root stays locked).
         out += [line, "rootpw --lock", f'sshkey --username=root "{pub}"',
                 'user --name=beheerder --gecos="Beheerder" --groups=wheel --password=kiezel-ci-admin --plaintext']
+    elif line == "%pre --log=/tmp/kiezel-pre.log" and insecure:
+        out.append(line)
+        out += ["mkdir -p /etc/containers/registries.conf.d",
+                f"printf '[[registry]]\\nlocation = \"{insecure}\"\\ninsecure = true\\n' > /etc/containers/registries.conf.d/99-kiezel-local-test.conf"]
     elif line == "reboot":
         out += ['bootloader --append="console=ttyS0"', "poweroff"]
     else:
