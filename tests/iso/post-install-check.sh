@@ -117,6 +117,16 @@ else
 fi
 pol="$(ssh_vm "jq -r '.transports.docker[\"ghcr.io/elstvictor05-droid/kiezel\"][0].type' /etc/containers/policy.json" 2>&1)"
 [[ "${pol}" == "sigstoreSigned" ]] && pass "installed trust policy requires Kiezel signatures" || fail "installed trust policy" "${pol}"
+# Administrator from the installer (owner decision 1a). The CI kickstart stands in for the helper
+# with user "beheerder" in wheel; root must be locked and no other regular account may exist yet
+# (Plasma Setup creates the daily account on first boot).
+adm="$(ssh_vm 'id -nG beheerder 2>&1 | tr " " ","; passwd -S root | cut -d" " -f2; getent passwd | awk -F: "\$3>=1000 && \$3<60000 {print \$1}" | xargs' 2>&1 | xargs)"
+if [[ "${adm}" =~ ^beheerder,wheel\ (L|LK)\ beheerder$ ]]; then
+    pass "installer created the administrator (beheerder in wheel); root locked; no daily account yet"
+else fail "administrator from the installer" "got '${adm}' (want: beheerder,wheel L beheerder)"; fi
+pse="$(ssh_vm 'systemctl show-environment >/dev/null; grep -h PLASMA_SETUP_USER_CREATION_OVERRIDE /usr/lib/environment.d/*.conf; test -e /etc/plasma-setup-done && echo done || echo pending' 2>&1 | xargs)"
+[[ "${pse}" == "PLASMA_SETUP_USER_CREATION_OVERRIDE=1 pending" ]] && pass "Plasma Setup will still create the daily account (override set, setup pending)" \
+    || fail "Plasma Setup pending with account override" "${pse}"
 
 out="$(ssh_vm "bootc switch ghcr.io/elstvictor05-droid/kiezel:ci-unsigned-bootable" 2>&1)"
 if [[ $? -ne 0 ]] && grep -qi signature <<<"${out}"; then pass "installed system refuses an UNSIGNED Kiezel image"

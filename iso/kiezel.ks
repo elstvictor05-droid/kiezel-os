@@ -1,7 +1,7 @@
 # Kiezel network installer (ADR-0005)
 #
 # Injected into Fedora's official, Secure-Boot-signed netinstall ISO by iso/build-iso.sh.
-# The installer asks only for: Wi-Fi (if no cable), the disk passphrase and the admin account.
+# The installer asks only for: Wi-Fi (if no cable), the disk passphrase and the administrator account.
 # Everything else is preset. The daily (non-admin) account is created on first boot by
 # KDE Plasma Setup (ADR-0007).
 #
@@ -26,7 +26,13 @@ autopart --noswap --encrypt --luks-version=luks2
 # installs into the installer environment (Fedora's installer otherwise accepts anything).
 ostreecontainer --url=@KIEZEL_IMAGE@ --transport=registry
 
-rootpw --lock
+# The ADMINISTRATOR is created in the installer by the person who installs (the helper), in the
+# "User Creation" step with "Make this user administrator" ticked (docs/user-guide/helper-sheet.md).
+# There is deliberately NO rootpw line: Anaconda counts any kickstart rootpw, even --lock, as an
+# admin, and would then skip the account step entirely (pyanaconda users.py,
+# check_admin_user_exists). Without it the installer cannot continue until an admin exists.
+# %post locks root again whenever a wheel administrator was created.
+# The DAILY account, without admin rights, is created on first boot by Plasma Setup (ADR-0007).
 firstboot --disable
 
 # Always boot to the graphical login. Without this, Anaconda picks multi-user.target for text
@@ -75,6 +81,15 @@ set -eu
 sed -i -E '/^[^#[:space:]]+[[:space:]]+\/[[:space:]]/d' /etc/fstab
 echo "fstab after Kiezel fix:"; cat /etc/fstab
 echo "locale: $(cat /etc/locale.conf 2>/dev/null)"
+# Root stays locked when a wheel administrator exists (the normal path). If the helper chose a root
+# password instead of an admin user, root is left as the only administrator.
+admins="$(getent group wheel | cut -d: -f4)"
+if [[ -n "${admins}" ]]; then
+    passwd -l root
+    echo "Kiezel: administrator(s) in wheel: ${admins}; root locked"
+else
+    echo "Kiezel: WARNING no wheel administrator; root password is the only admin access"
+fi
 # Signatures: enforced on the installed system by /etc/containers/policy.json (sigstoreSigned for
 # the Kiezel scope), which every pull consults. Proven by tests/iso/post-install-check.sh.
 %end

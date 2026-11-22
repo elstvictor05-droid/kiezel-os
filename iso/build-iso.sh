@@ -66,8 +66,11 @@ for line in lines:
         out.append("text")
     elif line.startswith("autopart "):
         out.append(line + " --passphrase=kiezel-ci-test")
-    elif line == "rootpw --lock":
-        out += [line, f'sshkey --username=root "{pub}"']
+    elif line == "firstboot --disable":
+        # Non-interactive stand-ins for what the helper types in production: the administrator
+        # (wheel, fixed test password) and root's SSH key for the tests (root stays locked).
+        out += [line, "rootpw --lock", f'sshkey --username=root "{pub}"',
+                'user --name=beheerder --gecos="Beheerder" --groups=wheel --password=kiezel-ci-admin --plaintext']
     elif line == "reboot":
         out += ['bootloader --append="console=ttyS0"', "poweroff"]
     else:
