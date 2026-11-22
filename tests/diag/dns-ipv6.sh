@@ -48,7 +48,7 @@ start_vm() {   # $1 = on|off (QEMU user-net IPv6)
         -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
         -drive "if=pflash,format=raw,unit=1,file=${WORKDIR}/OVMF_VARS.fd" \
         -drive "file=${DISK},if=virtio,format=qcow2,snapshot=on" \
-        -netdev "user,id=n0,ipv6=${v6},domainname=home.arpa" -device virtio-net-pci,netdev=n0 \
+        -netdev "user,id=n0,ipv4=on,ipv6=${v6},domainname=home.arpa" -device virtio-net-pci,netdev=n0 \
         -device "vhost-vsock-pci,guest-cid=${CID}" \
         -serial "file:${WORKDIR}/serial-v6${v6}.log" -display none \
         -daemonize -pidfile "${WORKDIR}/qemu.pid" || { echo "QEMU failed" >&2; exit 1; }
@@ -95,7 +95,10 @@ for l in sys.stdin:
 
 # VM 1: like the CI runner
 start_vm on
-ssh_vm 'ip -6 route show default; resolvectl dns | head -1; systemctl --version | head -1' | tee -a "${SUMMARY}"
+# Guard: both protocols must be up (QEMU: "ipv6=on" alone switches IPv4 OFF; that invalidated
+# the first diagnostic run).
+ssh_vm 'ip -4 addr show enp0s2 | grep -m1 inet; ip -6 route show default; resolvectl dns | tr -s " \n" " "; echo; systemctl --version | head -1' | tee -a "${SUMMARY}"
+ssh_vm 'ip -4 route show default | grep -q . && ip -6 route show default | grep -q .' || { echo "VM 1 lacks IPv4 or IPv6: invalid setup" | tee -a "${SUMMARY}"; exit 1; }
 # Owner point 5: why does resolved stay on a broken server? Debug log during the baseline.
 ssh_vm 'resolvectl log-level debug'
 measure "baseline@v6on"
@@ -107,7 +110,8 @@ stop_vm
 
 # VM 2: control without IPv6 in the guest
 start_vm off
-ssh_vm 'ip -6 route show default; resolvectl dns | head -1' | tee -a "${SUMMARY}"
+ssh_vm 'ip -4 addr show enp0s2 | grep -m1 inet; ip -6 route show default; resolvectl dns | tr -s " \n" " "; echo' | tee -a "${SUMMARY}"
+ssh_vm 'ip -4 route show default | grep -q .' || { echo "VM 2 lacks IPv4: invalid setup" | tee -a "${SUMMARY}"; exit 1; }
 measure "baseline@v6off"
 stop_vm
 
