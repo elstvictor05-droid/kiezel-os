@@ -33,7 +33,13 @@ Mechanism:
 - Runs are serialised: the **NetworkManager dispatcher** (connect, DHCP change, connectivity
   change) only restarts `kiezel-dns-route.service`, and the script holds a lock
   (`/run/kiezel-dns-route.lock`). The service also runs every **5 minutes**
-  (`kiezel-dns-route.timer`). After a captive-portal login, Kiezel goes back to Quad9 by itself.
+  (`kiezel-dns-route.timer`, backstop).
+- `/usr/libexec/kiezel/dns-watch` (`kiezel-dns-watch.service`) starts the service within seconds
+  when Quad9 stops or starts answering **without** a network event. While Quad9 is primary it is
+  passive and sends nothing: every 2 s it reads resolved's number of pending transactions over
+  D-Bus, and when lookups stay pending for 2+ s it starts a re-check. In fallback it probes Quad9
+  every 10 s (one query for `dns.quad9.net`). After a captive-portal login, Kiezel goes back to
+  Quad9 by itself within ~10 s.
 - Modes (`/usr/libexec/kiezel/dns-mode`, `ujust`):
   - `quad9` (default);
   - `router`: the privacy choice "off", network DNS only;
@@ -98,3 +104,37 @@ Fix:
 After the fix, the same burst gives `Result=success`, `running`, and no failure lines. The boot
 test now checks the burst, and when the system is degraded it records each failed unit's
 `Result` and journal in the report.
+
+### DNS soak test and the mid-session outage (after run 45015996234)
+
+Run 45015996234 failed the unsigned-switch check with `lookup ghcr.io: no such host`, a minute
+after all DNS checks had passed. The logs did not show the cause. That check now pins ghcr.io, so
+it proves only the signature policy; the owner asked for separate evidence about DNS itself.
+
+`tests/boot/dns-soak.py` runs in the boot test right before that check, with the real resolver:
+for 5 minutes, every second, one lookup through NSS (`getent ahosts`, the path bootc/podman use)
+and one that bypasses resolved's cache (`resolvectl query --cache=no`), of 8 rotating names. During
+the run: `nmcli device reapply`, two bursts of 8 dispatcher events, a reconnect to a network that
+blocks Quad9, Quad9 coming back with no trigger, and a **mid-session Quad9 outage** with no trigger.
+Every failure is logged with time, phase, error and the routing at that moment
+(`dns-soak.jsonl`, a CI artifact).
+
+What the first local runs showed (VM, user-mode network):
+
+| Run | Image | Failed lookups (of 600) | Mid-session outage -> fallback |
+|---|---|---|---|
+| 1 | before the watcher | 3, all right after Quad9 was blocked | only because the test sent a dispatcher event; with no event: up to **5 min** (timer) |
+| 3 | with the passive watcher | **0** outside the outage window | **7.6 s**, by itself |
+
+Finding (an image weakness, fixed): a Quad9 outage in the middle of a session, with no network
+event, was only noticed by the 5-minute timer, so lookups failed for up to 5 minutes. The watcher
+reduces that to seconds.
+
+What remains, by design: lookups that **start** in the few seconds between the outage and the
+switch (7 in run 3) fail after resolved's timeout. While Quad9 is primary the router does not take
+part in lookups (that is the privacy choice of this ADR), so nothing else can answer them. Zero
+here is only possible if the router always receives every lookup in parallel, which gives up
+"Quad9 instead of your provider". **Owner decision pending.** Until then the boot test requires
+0 failures outside that window, reports the window's count, and requires the switch within 15 s.
+A reconnect to a Quad9-blocking network has no such window: NetworkManager starts every new link
+with `default-route=yes`, and the probe only removes it once Quad9 answers.

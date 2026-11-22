@@ -3,8 +3,9 @@
 #   Quad9 answers  -> router link: default-route=no (router only for local routing domains)
 #   Quad9 silent   -> router link: default-route=yes (automatic fallback: captive portals,
 #                     networks that block outside DNS)
-# Called by the NetworkManager dispatcher on connect/connectivity changes and every 5 minutes by
-# kiezel-dns-route.timer, so it switches back to Quad9 after a portal login.
+# Started by the NetworkManager dispatcher on connect/connectivity changes, by kiezel-dns-watch
+# within ~10 s when Quad9 stops or starts answering in the middle of a session (so it switches back
+# to Quad9 after a portal login), and every 5 minutes by kiezel-dns-route.timer as a backstop.
 #
 # Two rules keep this free of races (run #31):
 #   - The probe talks to Quad9 DIRECTLY and never touches the routing while it runs, so there is
@@ -43,36 +44,9 @@ esac
 mapfile -t servers < <(resolvectl dns 2>/dev/null | sed -nE 's/^Global: *//p' | tr ' ' '\n' | sed -E 's/#.*//; /^$/d')
 [[ ${#servers[@]} -gt 0 ]] || { set_route yes "no global DNS configured"; exit 0; }
 
-if python3 -I - "${servers[@]}" <<'EOF'
-import socket, struct, sys, concurrent.futures as cf
-
-QUERY = struct.pack(">HHHHHH", 0x4b5a, 0x0100, 1, 0, 0, 0) + b"\x03dns\x05quad9\x03net\x00" + struct.pack(">HH", 1, 1)
-
-def udp(addr):
-    fam = socket.AF_INET6 if ":" in addr else socket.AF_INET
-    with socket.socket(fam, socket.SOCK_DGRAM) as s:
-        s.settimeout(2)
-        for _ in range(2):
-            try:
-                s.sendto(QUERY, (addr, 53))
-                data = s.recv(512)
-                if data[:2] == QUERY[:2] and data[2] & 0x80:
-                    return True
-            except OSError:
-                pass
-    return False
-
-def tls_port(addr):
-    try:
-        with socket.create_connection((addr, 853), timeout=3):
-            return True
-    except OSError:
-        return False
-
-jobs = [(f, a) for a in sys.argv[1:] for f in (udp, tls_port)]
-with cf.ThreadPoolExecutor(len(jobs)) as ex:
-    sys.exit(0 if any(ex.map(lambda j: j[0](j[1]), jobs)) else 1)
-EOF
+# The probe code is shared with the watcher (kiezel-dns-watch.service), which notices a Quad9
+# outage within seconds and then starts this service.
+if /usr/libexec/kiezel/dns-watch --probe "${servers[@]}"
 then
     set_route no "Quad9 reachable, links only for local domains"
 else

@@ -354,6 +354,40 @@ else
     fail "signature path in the VM" "no --sigtest fixtures; SKIP is only allowed on forks"
 fi
 
+# --- DNS soak (owner requirement after run 45015996234) -----------------------------------------
+# One lookup per second per method for 5 minutes, also during network events, a reconnect to a
+# network that blocks Quad9, and a mid-session Quad9 outage (tests/boot/dns-soak.py). It runs right
+# before the unsigned-switch check, where that run saw "lookup ghcr.io: no such host", and with
+# the REAL resolver: nothing is pinned. A failed lookup is an image bug until proven otherwise.
+#   failure        must be 0
+#   no-link        started while the link was down during the reconnect (reported)
+#   detect-window  started during the mid-session outage before the switch to the fallback;
+#                  by design only the router could answer those (ADR-0012; reported, and the
+#                  switch itself must happen within 15 s)
+if scp_vm "${HERE}/dns-soak.py" root@vsock:/run/dns-soak.py >/dev/null 2>&1; then
+    ssh_vm "python3 -I /run/dns-soak.py ${link} 300" > "${WORKDIR}/dns-soak.jsonl" 2>&1
+    sum="$(grep '"summary"' "${WORKDIR}/dns-soak.jsonl" | tail -1)"
+    if [[ -z "${sum}" ]]; then
+        fail "DNS soak ran to the end" "no summary; see dns-soak.jsonl"
+    else
+        read -r n failed f_nss f_up nolink detect slow <<<"$(jq -r '"\(.lookups) \(.failed) \(.failed_by_method.nss) \(.failed_by_method.upstream) \(.no_link) \(.detect_window) \(.slowest_ok_secs)"' <<<"${sum}")"
+        if [[ "${failed}" == "0" && "${n}" -ge 590 ]]; then
+            pass "DNS soak: ${n} lookups in 5 min (events, reconnect to a Quad9-blocking network, outage): 0 failed"
+        else
+            fail "DNS soak: 0 failed lookups required" "${failed} failed of ${n} (nss ${f_nss}, upstream ${f_up}); details in dns-soak.jsonl"
+            dns_journal
+        fi
+        log "INFO  DNS soak: ${nolink} lookup(s) started while the link was down (reconnect), ${detect} in the outage detection window; slowest successful lookup ${slow} s"
+        sw="$(jq -r '[.events[] | select(.event | startswith("Quad9 outage")) | .fallback_after_secs] | first // "none"' <<<"${sum}")"
+        back="$(jq -r '[.events[] | select(.event | startswith("Quad9 answers")) | .back_to_quad9_after_secs] | map(tostring) | join(",")' <<<"${sum}")"
+        if [[ "${sw}" =~ ^[0-9.]+$ ]] && awk -v s="${sw}" 'BEGIN{exit !(s <= 15)}'; then
+            pass "DNS soak: mid-session Quad9 outage -> fallback after ${sw} s (no network event needed); back to Quad9 after ${back} s"
+        else fail "DNS soak: outage -> fallback within 15 s" "switched after ${sw} s; back after ${back}"; dns_journal; fi
+    fi
+else
+    fail "DNS soak: copy the soak script into the VM"
+fi
+
 # The update path itself: a plain 'bootc switch' (what the update timer effectively does) to an
 # UNSIGNED bootable image in OUR repository must be refused by the trust policy.
 if skopeo inspect --raw "docker://${KIEZEL_REF}:ci-unsigned-bootable" >/dev/null 2>&1; then
