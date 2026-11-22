@@ -126,7 +126,11 @@ pass "VM booted and reachable"
 # --- Checks on the running system --------------------------------------------------
 state="$(ssh_vm 'systemctl is-system-running --wait' 2>/dev/null)"
 if [[ "${state}" == "running" ]]; then pass "system state: running"
-else fail "system state: running" "got '${state}'; failed: $(ssh_vm 'systemctl --failed --no-legend --plain | cut -d" " -f1 | xargs')"; fi
+else fail "system state: running" "got '${state}'; failed: $(ssh_vm 'systemctl --failed --no-legend --plain | cut -d" " -f1 | xargs')"
+    # Keep the reason, not just the unit name (PR #9: the cause was only found by reproducing it).
+    ssh_vm 'for u in $(systemctl --failed --no-legend --plain | cut -d" " -f1); do
+                echo "--- ${u}: $(systemctl show "${u}" -p Result --value)"; journalctl -b --no-pager -o cat -u "${u}" | tail -15
+            done' >> "${REPORT}" 2>&1; fi
 
 sb="$(ssh_vm 'mokutil --sb-state' 2>&1)"
 if grep -q 'SecureBoot enabled' <<<"${sb}"; then pass "Secure Boot enabled (Fedora shim accepted)"
@@ -258,6 +262,14 @@ samples="$(ssh_vm "systemctl restart --no-block kiezel-dns-route.service
         for i in \$(seq 20); do resolvectl default-route ${link} | awk '{print \$NF}'; sleep 0.5; done; wait" 2>&1 | sort | uniq -c | xargs)"
 [[ "${samples}" == "20 yes" ]] && pass "DNS: concurrent re-checks never drop the fallback (20/20 samples 'yes')" \
     || { fail "DNS: concurrent re-checks dropped the fallback" "samples: ${samples}"; dns_journal; }
+# A connect sends several NetworkManager events within a second; each restarts the unit. A burst
+# must not trip systemd's start limit (PR #9: "start-limit-hit" froze the fallback).
+burst="$(ssh_vm "systemctl reset-failed kiezel-dns-route.service 2>/dev/null
+        for e in up dhcp4-change dhcp6-change connectivity-change up connectivity-change dhcp4-change dhcp6-change; do
+            /usr/lib/NetworkManager/dispatcher.d/60-kiezel-dns-route ${link} \$e; done
+        sleep 10; systemctl show kiezel-dns-route.service -p Result --value; resolvectl default-route ${link} | awk '{print \$NF}'" 2>&1 | xargs)"
+[[ "${burst}" == "success yes" ]] && pass "DNS: a burst of 8 network events does not trip the start limit; fallback kept" \
+    || { fail "DNS: burst of network events" "result/route: ${burst}"; dns_journal; }
 ssh_vm 'nft delete table inet kiezelci; systemctl start kiezel-dns-route.service' >/dev/null 2>&1
 dns_settle
 route="$(ssh_vm "resolvectl default-route ${link} | awk '{print \$NF}'" 2>&1)"

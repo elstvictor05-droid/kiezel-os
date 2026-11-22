@@ -80,3 +80,21 @@ failure (5 green runs, then `default-route=no query=Timer expired`):
 Fixed with the direct probe and serialisation above. The boot test now waits for runs to settle
 before reading, checks the concurrent case explicitly, and saves the journal of dns-route,
 NetworkManager and resolved when a DNS check fails.
+
+### Follow-up found by the first PR #9 run: systemd's start limit
+
+With the dispatcher restarting the service on every network event, a connect, which sends
+several events within a second, exceeded systemd's default start limit (5 starts in 10 s). The
+unit ended in `start-limit-hit`, the boot showed `degraded`, and the fallback could not run at all
+until the interval passed. Reproduced deterministically in a VM with a burst of 8 dispatcher
+events (`Result=start-limit-hit`).
+
+Fix:
+
+- `StartLimitIntervalSec=0`: each run is a short oneshot and a restart replaces the previous one.
+- `SuccessExitStatus=SIGTERM 143`: a probe interrupted by a restart is intended, not a failure.
+  Without it every burst logged "Failed with result 'signal'".
+
+After the fix, the same burst gives `Result=success`, `running`, and no failure lines. The boot
+test now checks the burst, and when the system is degraded it records each failed unit's
+`Result` and journal in the report.
