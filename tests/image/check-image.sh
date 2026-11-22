@@ -82,12 +82,25 @@ check "printers: mDNS only in the kiezel-home zone, never in the default zone" \
     bash -c 'grep -q "service name=\"mdns\"" /usr/lib/firewalld/zones/kiezel-home.xml && ! grep -q mdns /usr/lib/firewalld/zones/kiezel.xml'
 check "fwupd metadata refresh enabled" systemctl is-enabled fwupd-refresh.timer
 check "USBGuard installed but disabled" bash -c 'rpm -q usbguard && ! systemctl is-enabled usbguard.service'
-fx=/usr/lib64/firefox/distribution/policies.json
+# Firefox is a Flatpak (ADR-0011); its policies reach the sandbox through the systemconfig extension.
+fx=/usr/share/kiezel/firefox-systemconfig/policies/policies.json
+check "Firefox RPM removed (Flatpak from Flathub instead)" bash -c '! rpm -q firefox'
+check "Firefox policies linked into the systemconfig extension at boot" \
+    grep -qx 'L+ /var/lib/flatpak/extension/org.mozilla.firefox.systemconfig/x86_64/stable - - - - /usr/share/kiezel/firefox-systemconfig' /usr/lib/tmpfiles.d/kiezel.conf
 check "Firefox: HTTPS-only forced" jq -e '.policies.HttpsOnlyMode == "force_enabled"' "${fx}"
 check "Firefox: telemetry off" jq -e '.policies.DisableTelemetry == true' "${fx}"
 check "Firefox: uBlock Origin force-installed" \
     jq -e '.policies.ExtensionSettings["uBlock0@raymondhill.net"].installation_mode == "force_installed"' "${fx}"
 check "Firefox: primary password required to store passwords" jq -e '.policies.PrimaryPassword == true' "${fx}"
+# Curated apps (config.yaml, default profile) preinstalled from Flathub at first boot.
+check "curated apps: preinstall list matches config.yaml (default profile)" bash -c '
+    want=$(python3 -c "import yaml; c=yaml.safe_load(open(\"/config.yaml\")); o=[\"simple\",\"standard\",\"advanced\"]; p=c[\"profile\"][\"default\"]; print(\" \".join(a for q in o[:o.index(p)+1] for a in c[\"apps\"][q]))" 2>/dev/null)
+    got=$(sed -n "s/^\[Flatpak Preinstall \(.*\)\]$/\1/p" /usr/share/flatpak/preinstall.d/kiezel.preinstall | xargs)
+    [[ -n "${want}" && "${got}" == "${want}" ]]'
+check "curated apps: preinstall service enabled" systemctl is-enabled kiezel-flatpak-preinstall.service
+check "curated apps: Flathub is the only Flatpak remote" bash -c '[[ "$(ls /etc/flatpak/remotes.d)" == "flathub.flatpakrepo" ]]'
+check "app install/remove prompt in clear Dutch (asks for the helper)" \
+    bash -c '[[ $(grep -c "Vraag het aan de persoon die deze computer voor u heeft ingesteld" /usr/share/polkit-1/actions/org.freedesktop.Flatpak.policy) == 4 ]]'
 check "ujust shows the Kiezel recipes" \
     bash -c 'just --justfile /usr/share/ublue-os/justfile --list 2>/dev/null | grep -q kiezel-dns-strict'
 

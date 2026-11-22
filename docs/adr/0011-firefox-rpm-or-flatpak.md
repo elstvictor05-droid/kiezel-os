@@ -1,6 +1,6 @@
 # ADR-0011: Firefox — RPM in the image, or Flatpak from Flathub
 
-- **Status:** Accepted (owner decision 2026-11-21: Flatpak). Implemented with the curated app list in Phase 3
+- **Status:** Accepted (owner decision 2026-11-21: Flatpak). Implemented in Phase 3 (2026-11-22, branch phase-3a)
 - **Date:** 2026-11-21
 - **Phase:** 2
 
@@ -47,3 +47,37 @@ application for the target users. It also fulfils the requirement. Plan:
   keeps the previous commit, so an admin can run `flatpak update --commit=<previous>` (a
   `ujust` recipe follows in Phase 5). Updates also come from the publisher's own release
   process.
+
+## Implementation (Phase 3, 2026-11-22)
+
+- **Firefox RPM removed** from the image (`build/47-curated-apps.sh`: `dnf5 remove firefox
+  firefox-langpacks`, nothing else depends on it; 348 MiB smaller).
+- **Policies:** `firefox/policies.json` ships as
+  `/usr/share/kiezel/firefox-systemconfig/policies/policies.json`. A tmpfiles.d line links
+  `/var/lib/flatpak/extension/org.mozilla.firefox.systemconfig/x86_64/stable` to that directory.
+  Firefox's Flatpak declares the extension point `org.mozilla.firefox.systemconfig` →
+  `/app/etc/firefox` (`no-autodownload`). The symlink approach works, so the copy fallback was not
+  needed. Checked in a VM: inside the sandbox `/app/etc/firefox/policies/policies.json` is
+  present, and a headless start with a fresh profile installs uBlock Origin by policy.
+- **Curated apps preinstalled** with Flatpak's own OS mechanism (Flatpak 1.18):
+  `/usr/share/flatpak/preinstall.d/kiezel.preinstall`, generated from `config.yaml` (the default
+  profile's apps: Firefox, Thunderbird, Gwenview, Okular). `kiezel-flatpak-preinstall.service`
+  runs `flatpak preinstall` at every boot, and retries every 2 minutes until it succeeds (no
+  network yet, Flathub busy). A user or admin who removes an app does not get it back, and a list
+  change in a new image is applied at the next boot. Flathub is the only Flatpak remote.
+- **Timing:** the apps arrive over the network during the first minutes after the first boot,
+  while Plasma Setup runs (about 27 s for Firefox and its runtime on the test VM's connection).
+- **Administrator prompt for app installs** (owner decision 6b): the daily account needs the
+  administrator to install or remove a system app. Flatpak's own Dutch text ("Authenticatie is
+  vereist om software te installeren") is replaced at build time with "Een programma installeren
+  vraagt het wachtwoord van de beheerder. Vraag het aan de persoon die deze computer voor u heeft
+  ingesteld." (and the same for removing). The build fails if upstream changes those messages.
+- **Tests:**
+  - `check-image.sh`: no Firefox RPM; the preinstall list equals `config.yaml`; the service is
+    enabled; Flathub is the only remote; the tmpfiles link; the Dutch prompt.
+  - Boot test: waits for the preinstall service, then checks that every listed app is installed,
+    and that Flatpak Firefox with a fresh profile gets uBlock Origin by policy.
+- **Known limit:** a user can still add a *personal* Flathub remote from a terminal
+  (`flatpak remote-add --user`) and install apps for themselves only, without the administrator.
+  Those apps are sandboxed and change nothing for the system or other users. Without such a
+  remote, Discover installs into the system installation, which asks for the administrator.

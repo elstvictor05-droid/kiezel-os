@@ -31,6 +31,10 @@ for ks in "$@"; do
         echo "FAIL  ${ks}: %post does not lock root when an administrator exists" >&2
         rc=1
     fi
+    if ! grep -qE '^[[:space:]]*sed -i .*UID_MIN.*/etc/login\.defs' "${ks}"; then
+        echo "FAIL  ${ks}: %post does not hide the administrator on the login screen (UID_MIN)" >&2
+        rc=1
+    fi
     [[ ${rc} -eq 0 ]] && echo "PASS  ${ks}: signature verification enforced; administrator asked in the installer"
 done
 exit "${rc}"

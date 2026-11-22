@@ -64,7 +64,7 @@ jobs:
           ci/build-commit.sh check "${LOCAL}" sudo podman
 
       - name: Static image checks
-        run: sudo podman run --rm -v ./tests/image:/t:ro,z "${LOCAL}" /t/check-image.sh
+        run: sudo podman run --rm -v ./tests/image:/t:ro,z -v ./config.yaml:/config.yaml:ro,z "${LOCAL}" /t/check-image.sh
 
       - name: Daily account cannot become administrator (groups, sudoers, every polkit rule)
         run: sudo env "PATH=${PATH}" tests/security/daily-account.sh "${LOCAL}"

@@ -87,6 +87,20 @@ admins="$(getent group wheel | cut -d: -f4)"
 if [[ -n "${admins}" ]]; then
     passwd -l root
     echo "Kiezel: administrator(s) in wheel: ${admins}; root locked"
+    # Hide the administrator(s) on the login screen (owner decision 6a); the helper logs in through
+    # "Other..." (docs/user-guide/helper-sheet.md). plasmalogin lists exactly the accounts with
+    # UID_MIN <= uid <= UID_MAX from /etc/login.defs and has no other filter (plasma-login-manager
+    # 6.8, UserModel::populate), so UID_MIN moves just past the highest admin uid. New accounts
+    # (the daily one from Plasma Setup) get uids from there on and stay visible.
+    top=0
+    for a in ${admins//,/ }; do
+        u="$(id -u "${a}")"
+        (( u >= 1000 && u < 60000 && u > top )) && top="${u}"
+    done
+    if (( top > 0 )); then
+        sed -i -E "s/^UID_MIN[[:space:]]+[0-9]+/UID_MIN\t\t\t$((top + 1))/" /etc/login.defs
+        echo "Kiezel: login screen hides uid <= ${top}; $(grep -E '^UID_MIN' /etc/login.defs)"
+    fi
 else
     echo "Kiezel: WARNING no wheel administrator; root password is the only admin access"
 fi

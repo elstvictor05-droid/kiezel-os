@@ -236,6 +236,27 @@ Because this suffices, the privileged service (enum values, `O_NOFOLLOW`, fixed 
 domain, malicious-input test) was **not built**. A login screen synced from System Settings
 (`/var/lib/plasmalogin/.config/kdeglobals`) still takes precedence.
 
+**Not final yet (owner, 2026-11-22):** 28% larger is a measurement, not a verdict. The two older
+testers judge the login screen before this is final: can they read their name, the password field
+and the buttons without leaning in, at their usual distance? Task L1 in
+`tests/usability/tasks.md`. If it is not enough, the next step is a larger size in the same
+`/usr` file, still without privileged code.
+
+### 6a. Administrator hidden on the login screen (owner, 2026-11-22)
+
+The login screen shows only the everyday account, so the user can never pick the administrator
+by mistake. plasmalogin lists exactly the accounts with `UID_MIN <= uid <= UID_MAX` from
+`/etc/login.defs` and has no other filter (plasma-login-manager 6.8, `UserModel::populate`). The
+kickstart's `%post` therefore sets `UID_MIN` to the highest administrator uid + 1 (normally 1001).
+New accounts, like the daily one from Plasma Setup, get uids from there on and stay visible. The
+helper logs in through **Other…** and types the name (helper sheet, section 2).
+
+- Tested: `tests/iso/check-kickstart.sh` fails without the `%post` step, and
+  `tests/iso/post-install-check.sh` checks that `UID_MIN` is `uid(beheerder) + 1`.
+- Side effect, accepted: tools that read `UID_MIN` as the start of "human" accounts treat the
+  administrator as a system account. polkit is not affected, because it asks for members of
+  `wheel`, not a uid range.
+
 ### Fresh-ISO run of the whole flow (2026-11-22)
 
 `tests/iso/local-fresh-install.sh` installs a local, unreleased image from a fresh CI-test ISO
@@ -266,7 +287,8 @@ merging; GHCR only has merged images.
 - **Note:** `sudo -n true` says "a password is required" for any account, admin or not; sudo asks
   for authentication before it looks at the rules. The tests use `sudo -l -U`, which is decisive.
 - **Usability finding:** the login screen preselects "Beheerder" (the first account) until the
-  daily account has logged in once. After that, plasmalogin remembers the last user.
+  daily account has logged in once. After that, plasmalogin remembers the last user. Resolved by
+  owner decision 6a (administrator hidden).
 
 ![Account page](../user-guide/images/daily-account-page.png)
 ![Login screen](../user-guide/images/login-screen-large-text.png)

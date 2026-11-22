@@ -14,8 +14,8 @@ systemctl enable fwupd-refresh.timer
 dnf5 -y install usbguard
 systemctl disable usbguard.service
 
-# Firefox enterprise policies (RPM Firefox reads them from its distribution directory).
-install -Dm0644 "${CTX}/firefox/policies.json" /usr/lib64/firefox/distribution/policies.json
+# Firefox enterprise policies: Firefox is a Flatpak (ADR-0011); build/47-curated-apps.sh ships the
+# policies through the org.mozilla.firefox.systemconfig extension.
 
 # sshd stays off (inherited default, asserted by tests/image/check-image.sh).
 

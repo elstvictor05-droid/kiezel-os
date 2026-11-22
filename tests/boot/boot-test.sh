@@ -333,9 +333,21 @@ ssh_vm "runuser -l ciuser -c '/usr/libexec/kiezel/container-registries close'" >
 # Flatpak/Firefox sandbox still works with the hardening (user namespaces + seccomp).
 bw="$(ssh_vm "runuser -l ciuser -c 'bwrap --unshare-all --share-net --die-with-parent --ro-bind / / --proc /proc --dev /dev true && echo ok'" 2>&1)"
 [[ "${bw}" == "ok" ]] && pass "unprivileged sandbox (bubblewrap, as used by Flatpak) works" || fail "bubblewrap sandbox works" "${bw:0:200}"
-fx="$(ssh_vm "runuser -l ciuser -c 'P=\$(mktemp -d); timeout 120 firefox --headless --no-remote --profile \$P about:blank >/dev/null 2>&1 & sleep 90; ls \$P/extensions/ 2>/dev/null; kill %1 2>/dev/null; true'" 2>&1)"
-if grep -q 'uBlock0@raymondhill.net' <<<"${fx}"; then pass "Firefox starts (content sandbox) and the policy installed uBlock Origin"
-else fail "Firefox starts and policy installs uBlock Origin" "extensions: ${fx:0:160}"; fi
+# Curated apps (ADR-0011): kiezel-flatpak-preinstall.service installs them from Flathub at first
+# boot. Wait for it (max 20 min), then every app on the list must be installed.
+pre="$(ssh_vm 'for _ in $(seq 240); do r=$(systemctl show -p Result,ActiveState --value kiezel-flatpak-preinstall.service | xargs); [[ "${r}" == "success inactive" ]] && flatpak preinstall --system --noninteractive -y >/dev/null 2>&1 && break; sleep 5; done
+        want=$(sed -n "s/^\[Flatpak Preinstall \(.*\)\]$/\1/p" /usr/share/flatpak/preinstall.d/kiezel.preinstall | sort | xargs)
+        have=$(flatpak list --system --app --columns=application | sort | xargs)
+        missing=""; for a in ${want}; do grep -qw "${a}" <<<"${have}" || missing="${missing} ${a}"; done
+        echo "want=[${want}] missing=[${missing# }] result=${r}"' 2>&1)"
+if [[ "${pre}" == *"missing=[]"* && "${pre}" == *"result=success inactive"* ]]; then
+    pass "curated apps preinstalled from Flathub at first boot (${pre%% missing=*})"
+else fail "curated apps preinstalled from Flathub" "${pre:0:300}"; ssh_vm 'journalctl -b -u kiezel-flatpak-preinstall --no-pager | tail -20' >> "${REPORT}" 2>&1; fi
+# Firefox (Flatpak) with a fresh profile: the Kiezel policies must reach the sandbox and install
+# uBlock Origin. The profile lives in the app's own data directory (the sandbox has a private /tmp).
+fx="$(ssh_vm "runuser -l ciuser -c 'P=\$HOME/.var/app/org.mozilla.firefox/ci-profile; mkdir -p \$P; timeout 120 flatpak run org.mozilla.firefox --headless --no-remote --profile \$P about:blank >/dev/null 2>&1 & sleep 90; ls \$P/extensions/ 2>/dev/null; flatpak kill org.mozilla.firefox 2>/dev/null; true'" 2>&1)"
+if grep -q 'uBlock0@raymondhill.net' <<<"${fx}"; then pass "Firefox (Flatpak) starts and the Kiezel policy installed uBlock Origin"
+else fail "Firefox (Flatpak) starts and policy installs uBlock Origin" "extensions: ${fx:0:160}"; fi
 
 # Lynis score (report only; the trend is tracked, not gated).
 if [[ -f "${LYNIS_TARBALL:-}" ]]; then
