@@ -1,7 +1,10 @@
 #!/usr/bin/bash
 # Re-evaluate DNS routing (Quad9 vs. the router's DNS) when the network changes (ADR-0012).
+# Always through the service, so systemd runs one evaluation at a time. "restart" replaces a run
+# that is still probing with a fresh one for the new network state; the probe never changes the
+# routing itself, so stopping it halfway is harmless.
 case "$2" in
     up|dhcp4-change|dhcp6-change|connectivity-change|vpn-up|vpn-down)
-        /usr/libexec/kiezel/dns-route ;;
+        systemctl restart --no-block kiezel-dns-route.service ;;
 esac
 exit 0

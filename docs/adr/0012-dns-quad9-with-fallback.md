@@ -26,12 +26,14 @@ Mechanism:
 
 - `/usr/lib/systemd/resolved.conf.d/50-kiezel-dns-over-tls.conf`: `DNS=` Quad9 (IPv4+IPv6, with
   TLS server name), `DNSOverTLS=opportunistic`.
-- `/usr/libexec/kiezel/dns-route`: sets the router link's `default-route` to **no**, then
-  checks whether Quad9 resolves `dns.quad9.net` within 6 s. If not, it sets the link back to
-  **yes** (fallback).
-- It runs from the **NetworkManager dispatcher** (connect, DHCP change, connectivity change) and
-  every **5 minutes** (`kiezel-dns-route.timer`). After a captive-portal login, Kiezel goes back
-  to Quad9 by itself.
+- `/usr/libexec/kiezel/dns-route`: probes the global servers (Quad9) **directly**: a DNS answer
+  over UDP/53 or a TCP connection to the DoT port 853 within ~3 s. Only after the probe does it set
+  the router link's `default-route`: **no** when Quad9 answers, **yes** (fallback) when it does
+  not. The probe never changes the routing, so a link in fallback never briefly drops out.
+- Runs are serialised: the **NetworkManager dispatcher** (connect, DHCP change, connectivity
+  change) only restarts `kiezel-dns-route.service`, and the script holds a lock
+  (`/run/kiezel-dns-route.lock`). The service also runs every **5 minutes**
+  (`kiezel-dns-route.timer`). After a captive-portal login, Kiezel goes back to Quad9 by itself.
 - Modes (`/usr/libexec/kiezel/dns-mode`, `ujust`):
   - `quad9` (default);
   - `router`: the privacy choice "off", network DNS only;
@@ -56,7 +58,25 @@ Mechanism:
   DHCP domain `home.arpa`; the host maps the name).
 - **Fallback:** Quad9 blocked with nftables inside the VM → the link switches to
   `default-route=yes` and lookups still work → block removed → back to `no`.
+- **Race regression:** while in fallback, the dispatcher hook, the service and a manual run start
+  at once; the link is sampled every 0.5 s for 10 s and must stay `yes` in all 20 samples.
 - `router` mode: no global DNS, link default route on, lookups work.
 - Limitation: a real captive portal (HTTP redirect page) is not simulated in CI. The DNS side of
   it, "outside DNS does not answer", is. A real hotel or train Wi-Fi test is on the v0.1
   hardware checklist.
+
+## Incident: run #31 (2026-11-22)
+
+The first version probed through systemd-resolved: it set the link to `default-route=no`, asked
+Quad9, and set it back to `yes` on failure. Two flaws, made visible by an intermittent boot-test
+failure (5 green runs, then `default-route=no query=Timer expired`):
+
+1. During every probe (up to 6 s) a link in fallback dropped out, so lookups hung, every
+   5 minutes and on every network event, on exactly the networks that need the fallback.
+2. The dispatcher called the script directly, in parallel with the timer's service. With Quad9
+   blocked, NetworkManager's connectivity check failed, the dispatcher started a second run, and
+   its `no` window overlapped the test's read.
+
+Fixed with the direct probe and serialisation above. The boot test now waits for runs to settle
+before reading, checks the concurrent case explicitly, and saves the journal of dns-route,
+NetworkManager and resolved when a DNS check fails.
