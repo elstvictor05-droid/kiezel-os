@@ -5,30 +5,76 @@
 #                     networks that block outside DNS)
 # Called by the NetworkManager dispatcher on connect/connectivity changes and every 5 minutes by
 # kiezel-dns-route.timer, so it switches back to Quad9 after a portal login.
+#
+# Two rules keep this free of races (run #31):
+#   - The probe talks to Quad9 DIRECTLY and never touches the routing while it runs, so there is
+#     no window in which a link in fallback briefly drops out (lookups would hang).
+#   - Runs are serialised with a lock: the dispatcher and the timer never run at the same time.
+#     A run that waited evaluates afresh after the lock is free.
 set -uo pipefail
 
 mode="$(cat /etc/kiezel/dns-mode 2>/dev/null || echo quad9)"
 log() { echo "kiezel-dns-route: $*"; }
 
+exec 9>/run/kiezel-dns-route.lock
+flock -w 30 9 || { log "another run holds the lock for 30 s; skipping"; exit 0; }
+
 # Links that received DNS servers from the network (typically the router).
 mapfile -t links < <(resolvectl dns 2>/dev/null | sed -nE 's/^Link [0-9]+ \(([^)]+)\): +[0-9a-fA-F].*/\1/p')
 [[ ${#links[@]} -gt 0 ]] || exit 0
 
-set_route() { for l in "${links[@]}"; do resolvectl default-route "${l}" "$1" 2>/dev/null; done; }
+set_route() {
+    local changed=()
+    for l in "${links[@]}"; do
+        [[ "$(resolvectl default-route "${l}" 2>/dev/null | awk '{print $NF}')" == "$1" ]] && continue
+        resolvectl default-route "${l}" "$1" 2>/dev/null && changed+=("${l}")
+    done
+    [[ ${#changed[@]} -eq 0 ]] || log "$2: ${changed[*]} -> default-route $1"
+}
 
-if [[ "${mode}" != "quad9" ]]; then
-    # router mode: the network's DNS only; strict mode: links never take part (no fallback).
-    if [[ "${mode}" == "router" ]]; then set_route yes; else set_route no; fi
-    log "mode ${mode}: links ${links[*]} -> default-route $([[ "${mode}" == router ]] && echo yes || echo no)"
-    exit 0
-fi
+case "${mode}" in
+    router) set_route yes "mode router"; exit 0 ;;   # the network's DNS only
+    quad9)  ;;
+    *)      set_route no "mode ${mode}"; exit 0 ;;   # strict: links never take part, no fallback
+esac
 
-# Probe: with the links out of the default route, can the global resolver (Quad9) answer?
-set_route no
-resolvectl flush-caches 2>/dev/null
-if timeout 6 resolvectl query --cache=no --legend=no dns.quad9.net >/dev/null 2>&1; then
-    log "Quad9 reachable: links ${links[*]} only for local domains"
+# Probe the global servers (Quad9) directly: a DNS answer over UDP/53 or a TCP connection to the
+# DNS-over-TLS port 853 means systemd-resolved can use them (opportunistic DoT uses either).
+mapfile -t servers < <(resolvectl dns 2>/dev/null | sed -nE 's/^Global: *//p' | tr ' ' '\n' | sed -E 's/#.*//; /^$/d')
+[[ ${#servers[@]} -gt 0 ]] || { set_route yes "no global DNS configured"; exit 0; }
+
+if python3 -I - "${servers[@]}" <<'EOF'
+import socket, struct, sys, concurrent.futures as cf
+
+QUERY = struct.pack(">HHHHHH", 0x4b5a, 0x0100, 1, 0, 0, 0) + b"\x03dns\x05quad9\x03net\x00" + struct.pack(">HH", 1, 1)
+
+def udp(addr):
+    fam = socket.AF_INET6 if ":" in addr else socket.AF_INET
+    with socket.socket(fam, socket.SOCK_DGRAM) as s:
+        s.settimeout(2)
+        for _ in range(2):
+            try:
+                s.sendto(QUERY, (addr, 53))
+                data = s.recv(512)
+                if data[:2] == QUERY[:2] and data[2] & 0x80:
+                    return True
+            except OSError:
+                pass
+    return False
+
+def tls_port(addr):
+    try:
+        with socket.create_connection((addr, 853), timeout=3):
+            return True
+    except OSError:
+        return False
+
+jobs = [(f, a) for a in sys.argv[1:] for f in (udp, tls_port)]
+with cf.ThreadPoolExecutor(len(jobs)) as ex:
+    sys.exit(0 if any(ex.map(lambda j: j[0](j[1]), jobs)) else 1)
+EOF
+then
+    set_route no "Quad9 reachable, links only for local domains"
 else
-    set_route yes
-    log "Quad9 NOT reachable: falling back to the network's DNS on ${links[*]}"
+    set_route yes "Quad9 NOT reachable, falling back to the network's DNS"
 fi
