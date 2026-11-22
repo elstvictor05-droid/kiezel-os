@@ -18,6 +18,10 @@ WORK="$(realpath -m "${2:-tests/out/fresh}")"
 PORT="${PORT:-5055}"
 mkdir -p "${WORK}"
 
+# 0. Never install a stale image: it must be built from HEAD of this work tree.
+ci/build-commit.sh check "${IMAGE}"
+EXPECT_COMMIT="$(git rev-parse HEAD)"
+
 # 1. Registry + signed image
 podman rm -f kiezel-fresh-registry >/dev/null 2>&1 || true
 # Same pinned registry image as .github/workflows/build.yml.
@@ -46,5 +50,5 @@ iso/build-iso.sh --test --test-pubkey tests/out/ci_key.pub \
 # 3. Install + post-install checks
 TIMEOUT="${TIMEOUT:-4200}" tests/iso/install-test.sh --iso "${WORK}/iso/kiezel-netinstall-ci-test.iso" \
     --expect success --workdir "${WORK}/install"
-EXPECT_IMAGE="10.0.2.2:${PORT}/kiezel@${digest}" \
+EXPECT_IMAGE="10.0.2.2:${PORT}/kiezel@${digest}" EXPECT_COMMIT="${EXPECT_COMMIT}" \
     tests/iso/post-install-check.sh --workdir "${WORK}/install" --key tests/out/ci_key
