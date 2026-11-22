@@ -300,6 +300,22 @@ pz="$(ssh_vm 'firewall-cmd --zone=kiezel --query-service=mdns; /usr/libexec/kiez
 # Services.
 svc="$(ssh_vm 'systemctl is-active sshd.service; systemctl is-enabled fwupd-refresh.timer; systemctl is-active usbguard.service' 2>&1 | xargs)"
 [[ "${svc}" == "inactive enabled inactive" ]] && pass "sshd off, fwupd refresh on, USBGuard off by default" || fail "service baseline" "${svc}"
+# Daily account (owner decision 1a): created exactly as Plasma Setup does (useradd + the groups from
+# /etc/xdg/plasmasetuprc), then every route to root is tried as that account. The polkit rules for
+# an active local session are evaluated separately (tests/security/daily-account.sh).
+daily="$(ssh_vm 'g=$(sed -n "s/^UserGroups=//p" /etc/xdg/plasmasetuprc); useradd -m kzdaily && usermod -a -G "$g" kzdaily
+        echo "groups=$(id -nG kzdaily | tr " " ",")"
+        runuser -u kzdaily -- sudo -n true >/dev/null 2>&1 && echo sudo=ROOT || echo sudo=denied
+        runuser -u kzdaily -- pkexec --disable-internal-agent true >/dev/null 2>&1 && echo pkexec=ROOT || echo pkexec=denied
+        runuser -u kzdaily -- run0 --no-ask-password true >/dev/null 2>&1 && echo run0=ROOT || echo run0=denied
+        runuser -u kzdaily -- systemctl --no-ask-password start kiezel-dns-route.service >/dev/null 2>&1 && echo systemctl=ROOT || echo systemctl=denied
+        userdel -r kzdaily' 2>&1 | xargs)"
+# Note: on ostree, "users" lives in /usr/lib/group (nss-altfiles) and usermod silently leaves it out;
+# the account then has no extra group at all, which is fine. Only admin groups matter here.
+if [[ "${daily}" =~ sudo=denied\ pkexec=denied\ run0=denied\ systemctl=denied ]] \
+   && ! grep -qE 'groups=[^ ]*(wheel|empower)' <<<"${daily}"; then
+    pass "daily account (Plasma Setup groups): not in wheel; sudo, pkexec, run0 and systemctl all refused"
+else fail "daily account must not reach root" "${daily}"; fi
 
 # Container trust (ADR-0004): root/system cannot pull unsigned images from other registries...
 out="$(ssh_vm 'podman pull -q quay.io/libpod/alpine:latest' 2>&1)"
