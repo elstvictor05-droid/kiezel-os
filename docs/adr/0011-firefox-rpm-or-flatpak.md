@@ -61,10 +61,17 @@ application for the target users. It also fulfils the requirement. Plan:
   present, and a headless start with a fresh profile installs uBlock Origin by policy.
 - **Curated apps preinstalled** with Flatpak's own OS mechanism (Flatpak 1.18):
   `/usr/share/flatpak/preinstall.d/kiezel.preinstall`, generated from `config.yaml` (the default
-  profile's apps: Firefox, Thunderbird, Gwenview, Okular). `kiezel-flatpak-preinstall.service`
+  profile's apps: Firefox, Thunderbird ESR (org.mozilla.thunderbird_esr), Gwenview, Okular). `kiezel-flatpak-preinstall.service`
   runs `flatpak preinstall` at every boot, and retries every 2 minutes until it succeeds (no
   network yet, Flathub busy). A user or admin who removes an app does not get it back, and a list
   change in a new image is applied at the next boot. Flathub is the only Flatpak remote.
+- **End-of-life apps:** Flathub sometimes retires an app id and points it to a replacement
+  (`org.mozilla.Thunderbird` became `org.mozilla.thunderbird_esr`). `flatpak preinstall` then
+  silently installs the replacement, and `config.yaml` no longer says what users get.
+  `tests/image/check-flathub-eol.sh` fails the build, and the weekly `iso.yml` run, when an app
+  is end-of-life or does not exist. When Flathub is unreachable, it retries, and then fails with
+  a separate "unreachable" message, never as end-of-life. The boot test compares the installed
+  app ids with `config.yaml`.
 - **Timing:** the apps arrive over the network during the first minutes after the first boot,
   while Plasma Setup runs (about 27 s for Firefox and its runtime on the test VM's connection).
 - **Administrator prompt for app installs** (owner decision 6b): the daily account needs the

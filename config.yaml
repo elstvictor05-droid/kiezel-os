@@ -29,7 +29,7 @@ profile:
 apps:
   simple:
     - org.mozilla.firefox
-    - org.mozilla.Thunderbird
+    - org.mozilla.thunderbird_esr   # Flathub retired org.mozilla.Thunderbird (end-of-life, 2026)
     - org.kde.gwenview
     - org.kde.okular
   standard:

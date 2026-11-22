@@ -66,6 +66,10 @@ jobs:
       - name: Static image checks
         run: sudo podman run --rm -v ./tests/image:/t:ro,z -v ./config.yaml:/config.yaml:ro,z "${LOCAL}" /t/check-image.sh
 
+      - name: Curated apps exist on Flathub and are not end-of-life
+        # Exit 3 = Flathub unreachable after retries (reported as such, never as end-of-life).
+        run: sudo podman run --rm -v ./tests/image:/t:ro,z -v ./config.yaml:/config.yaml:ro,z "${LOCAL}" /t/check-flathub-eol.sh
+
       - name: Daily account cannot become administrator (groups, sudoers, every polkit rule)
         run: sudo env "PATH=${PATH}" tests/security/daily-account.sh "${LOCAL}"
 

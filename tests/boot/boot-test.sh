@@ -334,15 +334,32 @@ ssh_vm "runuser -l ciuser -c '/usr/libexec/kiezel/container-registries close'" >
 bw="$(ssh_vm "runuser -l ciuser -c 'bwrap --unshare-all --share-net --die-with-parent --ro-bind / / --proc /proc --dev /dev true && echo ok'" 2>&1)"
 [[ "${bw}" == "ok" ]] && pass "unprivileged sandbox (bubblewrap, as used by Flatpak) works" || fail "bubblewrap sandbox works" "${bw:0:200}"
 # Curated apps (ADR-0011): kiezel-flatpak-preinstall.service installs them from Flathub at first
-# boot. Wait for it (max 20 min), then every app on the list must be installed.
-pre="$(ssh_vm 'for _ in $(seq 240); do r=$(systemctl show -p Result,ActiveState --value kiezel-flatpak-preinstall.service | xargs); [[ "${r}" == "success inactive" ]] && flatpak preinstall --system --noninteractive -y >/dev/null 2>&1 && break; sleep 5; done
-        want=$(sed -n "s/^\[Flatpak Preinstall \(.*\)\]$/\1/p" /usr/share/flatpak/preinstall.d/kiezel.preinstall | sort | xargs)
-        have=$(flatpak list --system --app --columns=application | sort | xargs)
-        missing=""; for a in ${want}; do grep -qw "${a}" <<<"${have}" || missing="${missing} ${a}"; done
-        echo "want=[${want}] missing=[${missing# }] result=${r}"' 2>&1)"
-if [[ "${pre}" == *"missing=[]"* && "${pre}" == *"result=success inactive"* ]]; then
-    pass "curated apps preinstalled from Flathub at first boot (${pre%% missing=*})"
-else fail "curated apps preinstalled from Flathub" "${pre:0:300}"; ssh_vm 'journalctl -b -u kiezel-flatpak-preinstall --no-pager | tail -20' >> "${REPORT}" 2>&1; fi
+# boot. Wait for the SERVICE (max 15 min), not for the apps: as soon as it has finished, the
+# installed app ids must equal config.yaml's default profile. A missing or extra app (e.g. an
+# end-of-life rename) fails at once, with the service journal in the report.
+want_apps="$(python3 -c '
+import sys, yaml
+c = yaml.safe_load(open(sys.argv[1])); o = ["simple", "standard", "advanced"]; p = c["profile"]["default"]
+print(" ".join(sorted(a for q in o[:o.index(p) + 1] for a in (c["apps"][q] or []))))' "${HERE}/../../config.yaml" 2>&1)"
+pre="$(ssh_vm 'for _ in $(seq 180); do
+            st=$(systemctl show -p ActiveState --value kiezel-flatpak-preinstall.service)
+            res=$(systemctl show -p Result --value kiezel-flatpak-preinstall.service)
+            ran=$(systemctl show -p ExecMainExitTimestampMonotonic --value kiezel-flatpak-preinstall.service)
+            [[ "${st}" == inactive && "${res}" == success && "${ran:-0}" != 0 ]] && break
+            [[ "${st}" == failed ]] && break
+            sleep 5
+        done
+        echo "state=${st} result=${res} after=${SECONDS}s"
+        echo "have=$(flatpak list --system --app --columns=application | LC_ALL=C sort | xargs)"' 2>&1)"
+have_apps="$(sed -n 's/^have=//p' <<<"${pre}")"
+svc="$(head -1 <<<"${pre}")"
+if [[ "${svc}" == "state=inactive result=success"* && "${have_apps}" == "${want_apps}" ]]; then
+    pass "curated apps preinstalled from Flathub; installed ids equal config.yaml (${want_apps}; ${svc##* })"
+else
+    fail "curated apps: installed ids equal config.yaml" "want=[${want_apps}] have=[${have_apps}] ${svc}"
+    { echo "--- kiezel-flatpak-preinstall journal"
+      ssh_vm 'journalctl -b -u kiezel-flatpak-preinstall --no-pager -o short-monotonic | tail -60' 2>&1; } >> "${REPORT}"
+fi
 # Firefox (Flatpak) with a fresh profile: the Kiezel policies must reach the sandbox and install
 # uBlock Origin. The profile lives in the app's own data directory (the sandbox has a private /tmp).
 fx="$(ssh_vm "runuser -l ciuser -c 'P=\$HOME/.var/app/org.mozilla.firefox/ci-profile; mkdir -p \$P; timeout 120 flatpak run org.mozilla.firefox --headless --no-remote --profile \$P about:blank >/dev/null 2>&1 & sleep 90; ls \$P/extensions/ 2>/dev/null; flatpak kill org.mozilla.firefox 2>/dev/null; true'" 2>&1)"

@@ -87,6 +87,21 @@ jobs:
             tests/out/iso/kiezel.ks
           if-no-files-found: ignore
 
+  flathub-eol:
+    # Weekly too: an app can go end-of-life on Flathub without any change in this repository
+    # (org.mozilla.Thunderbird did). Exit 3 = Flathub unreachable, never reported as end-of-life.
+    name: curated apps not end-of-life on Flathub
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install flatpak and add Flathub (user installation, GPG-verified repo file)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q flatpak python3-yaml
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Check every app in config.yaml
+        run: FLATPAK_INSTALLATION=--user tests/image/check-flathub-eol.sh config.yaml
+
   production-iso:
     # Built on PRs too: the production path (no --test) must never go untested again.
     name: production ISO (unsigned artifact; signed at release)
