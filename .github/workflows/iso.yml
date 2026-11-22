@@ -49,6 +49,16 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf swtpm gpgv
 
+      - name: Record which commit ${{ matrix.tag }} was built from
+        if: matrix.expect == 'success'
+        run: |
+          # iso.yml installs the RELEASED image, not this branch, so the expected commit is the one
+          # :stable carries now; post-install-check.sh fails if the installed system differs or has
+          # no commit at all (images from before ci/build-commit.sh).
+          rev="$(skopeo inspect --no-tags --format '{{index .Labels "org.opencontainers.image.revision"}}' "docker://${IMAGE}:${{ matrix.tag }}")"
+          echo "${{ matrix.tag }} revision: ${rev:-<none>}"
+          echo "EXPECT_COMMIT=${rev}" >> "$GITHUB_ENV"
+
       - name: Build CI-test ISO for ${{ matrix.tag }}
         run: |
           mkdir -p tests/out

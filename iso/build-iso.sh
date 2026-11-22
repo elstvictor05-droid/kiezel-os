@@ -108,7 +108,7 @@ podman run --rm --security-opt label=disable \
         [ -n \"\${start}\" ] || { echo 'could not locate the EFI partition' >&2; exit 1; }
         dd if=stage1.iso of=efiboot.img bs=512 skip=\"\${start}\" count=\$((end - start + 1)) status=none
         mcopy -o -i efiboot.img grub.cfg ::/EFI/BOOT/grub.cfg
-        mtype -i efiboot.img ::/EFI/BOOT/grub.cfg | grep -q 'inst.ks=' || { echo 'EFI grub.cfg patch failed' >&2; exit 1; }
+        mtype -i efiboot.img ::/EFI/BOOT/grub.cfg | grep -c 'inst.ks=' >/dev/null || { echo 'EFI grub.cfg patch failed' >&2; exit 1; }
         xorriso -indev stage1.iso -outdev /out/${name} -boot_image any replay \
             -append_partition 2 0xef efiboot.img 2>&1 | tail -2
         # Re-implant the media checksum, otherwise 'Test this media' halts the installer.

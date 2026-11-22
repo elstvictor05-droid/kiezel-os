@@ -58,10 +58,10 @@ echo "== Kiezel install test (expect: ${EXPECT})"
 start=${SECONDS} outcome="timeout"
 while (( SECONDS - start < TIMEOUT )); do
     if ! kill -0 "${qpid}" 2>/dev/null; then outcome="poweroff"; break; fi
-    if strings "${SERIAL}" 2>/dev/null | grep -qiE 'signature (is )?required|no signature|signature.*(invalid|not valid|verification failed)|A signature was required'; then
+    if grep -aqiE 'signature (is )?required|no signature|signature.*(invalid|not valid|verification failed)|A signature was required' "${SERIAL}" 2>/dev/null; then
         outcome="signature-error"; break
     fi
-    if strings "${SERIAL}" 2>/dev/null | grep -qE 'Traceback|An unknown error has occured|Pane is dead|error occurred while installing the payload'; then
+    if grep -aqE 'Traceback|An unknown error has occured|Pane is dead|error occurred while installing the payload' "${SERIAL}" 2>/dev/null; then
         outcome="installer-error"; break
     fi
     sleep 10
@@ -69,7 +69,7 @@ done
 echo "   outcome after $((SECONDS - start))s: ${outcome}"
 
 policy_ok=0
-strings "${SERIAL}" | grep -q 'Kiezel installer trust policy installed' && policy_ok=1
+grep -aq 'Kiezel installer trust policy installed' "${SERIAL}" 2>/dev/null && policy_ok=1
 
 rc=1
 case "${EXPECT}:${outcome}" in
@@ -82,7 +82,7 @@ case "${EXPECT}:${outcome}" in
     signature-rejected:signature-error)
         echo "PASS  installer REFUSED the unsigned image"; rc=0 ;;
     signature-rejected:installer-error)
-        if strings "${SERIAL}" | tr '\n' ' ' | grep -qiE 'signature'; then
+        if grep -aqi 'signature' "${SERIAL}"; then
             echo "PASS  installer REFUSED the unsigned image (payload error mentions the signature)"; rc=0
         else
             echo "FAIL  installer failed, but NOT because of the signature"

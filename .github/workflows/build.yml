@@ -59,7 +59,9 @@ jobs:
       - name: Build image
         run: |
           sudo podman build --pull=newer -t "${LOCAL}" \
-            --build-arg KIEZEL_VERSION="$(date -u +%Y%m%d).${GITHUB_SHA::7}" .
+            --build-arg KIEZEL_VERSION="$(date -u +%Y%m%d).${GITHUB_SHA::7}" \
+            --build-arg KIEZEL_COMMIT="$(ci/build-commit.sh)" .
+          ci/build-commit.sh check "${LOCAL}" sudo podman
 
       - name: Static image checks
         run: sudo podman run --rm -v ./tests/image:/t:ro,z "${LOCAL}" /t/check-image.sh

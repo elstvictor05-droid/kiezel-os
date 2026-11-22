@@ -13,6 +13,7 @@ policy=/etc/containers/policy.json
 scope='ghcr.io/elstvictor05-droid/kiezel'
 
 # --- Trust policy (ADR-0004) ---------------------------------------------------
+check "image records its build commit (/usr/share/kiezel/build-commit)" grep -qxE "[0-9a-f]{40}(-dirty)?" /usr/share/kiezel/build-commit
 check "policy.json is valid JSON" jq -e . "${policy}"
 check "default policy is reject" jq -e '.default[0].type == "reject"' "${policy}"
 check "Kiezel scope requires sigstore signature" \
