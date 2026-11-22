@@ -357,8 +357,29 @@ fi
 # The update path itself: a plain 'bootc switch' (what the update timer effectively does) to an
 # UNSIGNED bootable image in OUR repository must be refused by the trust policy.
 if skopeo inspect --raw "docker://${KIEZEL_REF}:ci-unsigned-bootable" >/dev/null 2>&1; then
-    out="$(ssh_vm "bootc switch ${KIEZEL_REF}:ci-unsigned-bootable" 2>&1)"
-    if [[ $? -ne 0 ]] && grep -qi 'signature' <<<"${out}"; then pass "bootc refuses to switch to an UNSIGNED Kiezel image"
+    # This check proves the SIGNATURE policy, not DNS. Run #45015996234 failed here with
+    # "lookup ghcr.io: no such host" (DNS had worked a minute earlier; the cause could not be
+    # proven from the logs). To make it deterministic: the runner resolves ghcr.io itself and pins
+    # it in the VM's /etc/hosts for this check only. A remaining network error (dial/timeout) is
+    # retried twice and then FAILS as a network error, never counted as "refused".
+    reg_host="${KIEZEL_REF%%/*}"
+    reg_ip="$(getent ahostsv4 "${reg_host}" | awk 'NR==1{print $1}')"
+    # Evidence first: does the VM's own resolver find ghcr.io right now? (INFO; diagnostics if not)
+    if ! ssh_vm "resolvectl query --legend=no ${reg_host} >/dev/null 2>&1"; then
+        log "INFO  the VM's resolver did not resolve ${reg_host} before the signature check; diagnostics in the report"
+        ssh_vm "echo '--- ${reg_host} lookup diagnostics'; resolvectl query ${reg_host}; resolvectl status; resolvectl statistics;
+                journalctl -b --no-pager -o short-monotonic -u systemd-resolved -u kiezel-dns-route | tail -40" >> "${REPORT}" 2>&1
+    fi
+    [[ -n "${reg_ip}" ]] && ssh_vm "echo '${reg_ip} ${reg_host} # kiezel-boot-test' >> /etc/hosts"
+    for attempt in 1 2 3; do
+        out="$(ssh_vm "bootc switch ${KIEZEL_REF}:ci-unsigned-bootable" 2>&1)"; rc=$?
+        grep -qiE 'dial tcp|i/o timeout|connection (reset|refused)|TLS handshake timeout|no such host' <<<"${out}" || break
+        log "      network error on attempt ${attempt}, retrying: ${out:0:160}"; sleep 10
+    done
+    ssh_vm "sed -i '/# kiezel-boot-test\$/d' /etc/hosts"
+    if [[ ${rc} -ne 0 ]] && grep -qi 'signature' <<<"${out}"; then pass "bootc refuses to switch to an UNSIGNED Kiezel image"
+    elif grep -qiE 'dial tcp|i/o timeout|connection (reset|refused)|TLS handshake timeout|no such host' <<<"${out}"; then
+        fail "bootc refuses to switch to an UNSIGNED Kiezel image" "NETWORK error, not a signature result, after 3 attempts: ${out:0:240}"
     else fail "bootc refuses to switch to an UNSIGNED Kiezel image" "${out:0:300}"; ssh_vm "bootc switch ${KIEZEL_REF}:stable" >/dev/null 2>&1; fi
 elif [[ ${ALLOW_SKIP} -eq 1 ]]; then
     skip "unsigned bootable image refused by bootc" "ci-unsigned-bootable not reachable (allowed: fork PR)"
