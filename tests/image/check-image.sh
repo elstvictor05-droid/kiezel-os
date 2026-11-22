@@ -76,6 +76,7 @@ check "DNS: Quad9 primary with opportunistic DNS-over-TLS (ADR-0012)" \
     bash -c "grep -q '^DNS=9.9.9.9#dns.quad9.net' ${dns} && grep -qx 'DNSOverTLS=opportunistic' ${dns}"
 check "DNS: fallback routing via NetworkManager dispatcher" test -x /usr/lib/NetworkManager/dispatcher.d/60-kiezel-dns-route
 check "DNS: fallback re-check timer enabled" systemctl is-enabled kiezel-dns-route.timer
+check "DNS: Quad9 outage watcher enabled (switches within ~10 s, not 5 min)" systemctl is-enabled kiezel-dns-watch.service
 check "printers: mDNS only in the kiezel-home zone, never in the default zone" \
     bash -c 'grep -q "service name=\"mdns\"" /usr/lib/firewalld/zones/kiezel-home.xml && ! grep -q mdns /usr/lib/firewalld/zones/kiezel.xml'
 check "fwupd metadata refresh enabled" systemctl is-enabled fwupd-refresh.timer

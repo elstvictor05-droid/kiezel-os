@@ -1,0 +1,146 @@
+#!/usr/bin/python3 -I
+"""Kiezel DNS watcher (ADR-0012): notices within seconds when Quad9 stops or starts answering.
+
+dns-route decides the routing, but it only ran on network events and every 5 minutes. When Quad9
+stopped answering in the middle of a session (no network event: an outage, or a network that
+starts filtering), lookups failed for up to 5 minutes. Found by the DNS soak test
+(tests/boot/dns-soak.py).
+
+  Quad9 primary   PASSIVE, no network traffic: every 2 s it reads systemd-resolved's number of
+                  pending transactions over D-Bus. When lookups stay pending for 2 samples in a
+                  row, it starts kiezel-dns-route.service, which probes Quad9 and switches to the
+                  fallback if Quad9 is silent (at most once per 15 s).
+  in fallback     every 10 s one small probe to Quad9 (a DNS query for dns.quad9.net, a TCP
+                  connect to port 853); when Quad9 answers again it starts kiezel-dns-route.
+It never changes routing itself, and it only ever talks to Quad9 about Quad9's own name, so it
+leaks nothing. Logs only when it starts a re-check.
+
+  dns-watch                 run the watch loop (kiezel-dns-watch.service)
+  dns-watch --probe ADDR..  probe once; exit 0 when any server answers (used by dns-route)
+"""
+import concurrent.futures as cf
+import os
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+TICK = 2            # seconds between passive samples
+FALLBACK_EVERY = 5  # ticks between Quad9 probes while in fallback (10 s)
+COOLDOWN = 15       # seconds between re-checks started for pending lookups
+QUERY = struct.pack(">HHHHHH", 0x4b5a, 0x0100, 1, 0, 0, 0) + b"\x03dns\x05quad9\x03net\x00" \
+    + struct.pack(">HH", 1, 1)
+
+
+def udp(addr):
+    fam = socket.AF_INET6 if ":" in addr else socket.AF_INET
+    try:
+        with socket.socket(fam, socket.SOCK_DGRAM) as s:
+            s.settimeout(2)
+            for _ in range(2):
+                try:
+                    s.sendto(QUERY, (addr, 53))
+                    data = s.recv(512)
+                    if data[:2] == QUERY[:2] and data[2] & 0x80:
+                        return True
+                except OSError:
+                    pass
+    except OSError:          # e.g. no IPv6 route at all
+        pass
+    return False
+
+
+def tls_port(addr):
+    try:
+        with socket.create_connection((addr, 853), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+def reachable(servers):
+    """True when systemd-resolved can use any of the servers (opportunistic DoT uses either)."""
+    jobs = [(f, a) for a in servers for f in (udp, tls_port)]
+    if not jobs:
+        return False
+    with cf.ThreadPoolExecutor(len(jobs)) as ex:
+        return any(ex.map(lambda j: j[0](j[1]), jobs))
+
+
+def resolvectl(*args):
+    try:
+        return subprocess.run(["resolvectl", *args], capture_output=True, text=True,
+                              timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def state():
+    """(global servers, {link: default-route}) for links that got DNS servers from the network."""
+    servers, links = [], {}
+    for line in resolvectl("dns").splitlines():
+        if line.startswith("Global:"):
+            servers = [w.split("#")[0] for w in line.split()[1:]]
+        elif line.startswith("Link ") and "):" in line and line.split("):", 1)[1].strip():
+            links[line.split("(", 1)[1].split(")", 1)[0]] = None
+    for link in links:
+        out = resolvectl("default-route", link).split()
+        links[link] = out[-1] if out else "?"
+    return servers, links
+
+
+def mode():
+    try:
+        with open("/etc/kiezel/dns-mode") as f:
+            return f.read().strip() or "quad9"
+    except OSError:
+        return "quad9"
+
+
+def pending():
+    """systemd-resolved's current number of DNS transactions (0 when unknown)."""
+    try:
+        out = subprocess.run(["busctl", "get-property", "org.freedesktop.resolve1",
+                              "/org/freedesktop/resolve1", "org.freedesktop.resolve1.Manager",
+                              "TransactionStatistics"], capture_output=True, text=True,
+                             timeout=5).stdout.split()
+        return int(out[1]) if len(out) >= 3 and out[0] == "(tt)" else 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 0
+
+
+def recheck(why):
+    print(f"kiezel-dns-watch: {why}; re-checking DNS routing", flush=True)
+    subprocess.run(["systemctl", "start", "--no-block", "kiezel-dns-route.service"], check=False)
+
+
+def watch():
+    tick = streak = 0
+    last = 0.0
+    while True:
+        time.sleep(TICK)
+        tick += 1
+        if mode() != "quad9":
+            streak = 0
+            continue
+        streak = streak + 1 if pending() > 0 else 0
+        if streak < 2 and tick % FALLBACK_EVERY:
+            continue
+        servers, links = state()
+        if not servers or not links:
+            continue
+        if all(r == "no" for r in links.values()):          # Quad9 primary
+            if streak >= 2 and time.monotonic() - last > COOLDOWN:
+                last = time.monotonic()
+                recheck("lookups pending for 2+ s while Quad9 is primary")
+        elif tick % FALLBACK_EVERY == 0 and reachable(servers):
+            recheck("Quad9 answers again while in fallback")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--probe":
+        sys.exit(0 if reachable(sys.argv[2:]) else 1)
+    if os.geteuid() != 0:
+        sys.exit("dns-watch: run as kiezel-dns-watch.service")
+    watch()

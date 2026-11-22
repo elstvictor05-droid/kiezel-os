@@ -122,6 +122,7 @@ jobs:
             tests/out/boot/serial-*.log
             tests/out/boot/avc*.txt
             tests/out/boot/dns-journal.txt
+            tests/out/boot/dns-soak.jsonl
             tests/out/boot/lynis*
             tests/out/portal/report.txt
             tests/out/portal/*.log

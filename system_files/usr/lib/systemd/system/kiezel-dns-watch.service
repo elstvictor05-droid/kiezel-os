@@ -1,0 +1,29 @@
+[Unit]
+Description=Kiezel: notice within seconds when Quad9 stops or starts answering (DNS fallback)
+Documentation=https://github.com/elstvictor05-droid/kiezel-os/blob/main/docs/adr/0012-dns-quad9-with-fallback.md
+After=systemd-resolved.service NetworkManager.service
+Wants=systemd-resolved.service
+
+[Service]
+# Passive while Quad9 is primary (reads resolved's pending lookups); probes Quad9 only in fallback.
+ExecStart=/usr/libexec/kiezel/dns-watch
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# AF_NETLINK: resolvectl resolves the interface name over rtnetlink.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

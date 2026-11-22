@@ -29,3 +29,4 @@ notes/
 .vscode/
 .idea/
 *.swp
+__pycache__/
