@@ -2,7 +2,16 @@
 Description=Kiezel: route DNS to Quad9, fall back to the network's DNS when Quad9 does not answer
 After=systemd-resolved.service NetworkManager.service
 Wants=systemd-resolved.service
+# No start rate limit: the NetworkManager dispatcher restarts this unit on every network event,
+# and a connect sends several within a second (up, dhcp4-change, connectivity-change, ...). With
+# the default limit (5 starts in 10 s) the unit ended in "start-limit-hit" and could not run at
+# all until the interval passed, freezing the DNS fallback (found in PR #9's boot test). Each run
+# is a short oneshot and a restart replaces the previous one, so a burst costs nothing.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/kiezel/dns-route
+# "restart" from the dispatcher stops a run that is still probing; that is intended, not a failure.
+# The probe never changes routing, so an interrupted run leaves nothing half-done.
+SuccessExitStatus=SIGTERM 143
